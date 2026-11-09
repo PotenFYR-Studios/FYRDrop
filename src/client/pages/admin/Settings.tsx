@@ -515,6 +515,7 @@ function UpdateCard() {
 function RestartCard() {
   const { push } = useToast();
   const [cfg, setCfg] = useState<any>(null);
+  const [interfaces, setInterfaces] = useState<{ name: string; address: string }[]>([]);
   const [saving, setSaving] = useState(false);
   const [pending, setPending] = useState<string[] | null>(null);
   const [restarting, setRestarting] = useState(false);
@@ -522,7 +523,10 @@ function RestartCard() {
   useEffect(() => {
     api
       .config()
-      .then((r) => setCfg(r.config))
+      .then((r: any) => {
+        setCfg(r.config);
+        setInterfaces(r.interfaces ?? []);
+      })
       .catch(() => {});
   }, []);
 
@@ -532,7 +536,11 @@ function RestartCard() {
     try {
       const r = await api.saveConfig({
         port: Number(cfg.port),
+        host: cfg.host,
         networkMode: cfg.networkMode,
+        tlsCertPath: cfg.tlsCertPath,
+        tlsKeyPath: cfg.tlsKeyPath,
+        hsts: !!cfg.hsts,
         tlsCommonName: cfg.tlsCommonName,
         sessionTtlDays: Number(cfg.sessionTtlDays),
         trustProxy: !!cfg.trustProxy,
@@ -584,6 +592,21 @@ function RestartCard() {
         </p>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div>
+            <Label>Interface</Label>
+            <select
+              value={cfg.host ?? "0.0.0.0"}
+              onChange={(e) => setCfg({ ...cfg, host: e.target.value })}
+              className="w-full rounded-xl border border-[#2a3247] bg-[#12161f] px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+            >
+              {interfaces.length === 0 && <option value="0.0.0.0">all interfaces</option>}
+              {interfaces.map((i) => (
+                <option key={i.address} value={i.address}>
+                  {i.address} ({i.name})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
             <Label>Port</Label>
             <Input type="number" min={1} max={65535} value={cfg.port} onChange={(e) => setCfg({ ...cfg, port: Number(e.target.value) })} />
           </div>
@@ -608,7 +631,24 @@ function RestartCard() {
             <Input type="number" min={1} max={365} value={cfg.sessionTtlDays} onChange={(e) => setCfg({ ...cfg, sessionTtlDays: Number(e.target.value) })} />
           </div>
         </div>
+        {cfg.networkMode === "custom" && (
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div>
+              <Label>Certificate path</Label>
+              <Input value={cfg.tlsCertPath ?? ""} onChange={(e) => setCfg({ ...cfg, tlsCertPath: e.target.value })} placeholder="/app/data/tls/cert.pem" />
+            </div>
+            <div>
+              <Label>Private key path</Label>
+              <Input value={cfg.tlsKeyPath ?? ""} onChange={(e) => setCfg({ ...cfg, tlsKeyPath: e.target.value })} placeholder="/app/data/tls/key.pem" />
+            </div>
+            <p className="text-[11px] text-slate-500 sm:col-span-2">Files must exist on the server and be readable by the FYRDrop user. Relative paths are resolved from the working directory.</p>
+          </div>
+        )}
         <label className="mt-3 flex items-center gap-2 text-xs text-slate-400">
+          <input type="checkbox" checked={!!cfg.hsts} onChange={(e) => setCfg({ ...cfg, hsts: e.target.checked })} className="accent-indigo-500" />
+          Send HSTS when serving HTTPS
+        </label>
+        <label className="mt-2 flex items-center gap-2 text-xs text-slate-400">
           <input type="checkbox" checked={!!cfg.trustProxy} onChange={(e) => setCfg({ ...cfg, trustProxy: e.target.checked })} className="accent-indigo-500" />
           Trust X-Forwarded-For from a reverse proxy (only enable when one sits in front)
         </label>

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { and, eq, gt, isNull, lt, or, sql, like } from "drizzle-orm";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { db, dirs, purgeExpired } from "../db";
 import { items, sessions, certs, auditLog, clusterNodes, storageUnits, users, groups, groupMembers } from "../db/schema";
 import { requireOwner } from "../lib/auth";
@@ -326,7 +327,15 @@ adminRoutes.delete("/units/:id", (c) => {
 });
 
 adminRoutes.get("/config", (c) => {
-  return c.json({ config: readConfig(), restartFields: ["port", "networkMode", "tlsCommonName", "sessionTtlDays", "trustProxy"] });
+  const interfaces = [{ name: "all interfaces", address: "0.0.0.0" }];
+  for (const [name, list] of Object.entries(os.networkInterfaces())) {
+    for (const i of list ?? []) if (i.family === "IPv4" && !i.internal) interfaces.push({ name, address: i.address });
+  }
+  return c.json({
+    config: readConfig(),
+    interfaces,
+    restartFields: ["port", "host", "networkMode", "tlsCommonName", "tlsCertPath", "tlsKeyPath", "hsts", "sessionTtlDays", "trustProxy"],
+  });
 });
 
 adminRoutes.post("/config", async (c) => {
@@ -338,6 +347,14 @@ adminRoutes.post("/config", async (c) => {
     if (!Number.isInteger(p) || p < 1 || p > 65535) return c.json({ error: "port must be 1-65535." }, 400);
     patch.port = p;
   }
+  if (typeof body.host === "string") {
+    const host = body.host.trim();
+    if (host && !/^[0-9a-f:.]{3,45}$/i.test(host)) return c.json({ error: "host must be an IPv4/IPv6 address or 0.0.0.0." }, 400);
+    patch.host = host || "0.0.0.0";
+  }
+  if (typeof body.tlsCertPath === "string") patch.tlsCertPath = body.tlsCertPath.trim().slice(0, 400);
+  if (typeof body.tlsKeyPath === "string") patch.tlsKeyPath = body.tlsKeyPath.trim().slice(0, 400);
+  if (typeof body.hsts === "boolean") patch.hsts = body.hsts;
   if (body.networkMode !== undefined) {
     if (!["auto", "off", "custom"].includes(body.networkMode)) return c.json({ error: "networkMode must be auto, off or custom." }, 400);
     patch.networkMode = body.networkMode;
@@ -351,7 +368,7 @@ adminRoutes.post("/config", async (c) => {
   if (typeof body.trustProxy === "boolean") patch.trustProxy = body.trustProxy;
   if (typeof body.showPinInLogs === "boolean") patch.showPinInLogs = body.showPinInLogs;
   const next = writeConfig(patch);
-  const restartFields = ["port", "networkMode", "tlsCommonName", "sessionTtlDays", "trustProxy"];
+  const restartFields = ["port", "host", "networkMode", "tlsCommonName", "tlsCertPath", "tlsKeyPath", "hsts", "sessionTtlDays", "trustProxy"];
   const restartRequired = Object.keys(patch).filter((k) => restartFields.includes(k));
   audit(c, "config.updated", true, `System config updated: ${Object.keys(patch).join(", ")}`, {
     target: "config",

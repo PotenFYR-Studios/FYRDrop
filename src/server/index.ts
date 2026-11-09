@@ -5,7 +5,7 @@ import fs from "node:fs";
 import { migrate, ensureDirs, dirs } from "./db";
 import { ensureBootstrap } from "./lib/bootstrap";
 import { printBanner } from "./lib/banner";
-import { effectivePort, effectiveNetworkMode, readConfig } from "./lib/config";
+import { effectivePort, effectiveNetworkMode, effectiveHost, customTlsPaths, readConfig } from "./lib/config";
 import { authRoutes } from "./routes/auth";
 import { itemRoutes, sweepUploads } from "./routes/items";
 import { certRoutes } from "./routes/certs";
@@ -42,6 +42,10 @@ function tlsOptions(): { cert?: string; key?: string; auto: boolean } {
   if (envCert && envKey && fs.existsSync(envCert) && fs.existsSync(envKey)) {
     return { cert: fs.readFileSync(envCert, "utf8"), key: fs.readFileSync(envKey, "utf8"), auto: false };
   }
+  const custom = customTlsPaths();
+  if (custom.cert && custom.key && fs.existsSync(custom.cert) && fs.existsSync(custom.key)) {
+    return { cert: fs.readFileSync(custom.cert, "utf8"), key: fs.readFileSync(custom.key, "utf8"), auto: false };
+  }
   const tlsDir = path.join(dirs.data, "tls");
   const certFile = path.join(tlsDir, "cert.pem");
   const keyFile = path.join(tlsDir, "key.pem");
@@ -67,7 +71,7 @@ const tlsActive = !!(tls.cert && tls.key);
 const app = new Hono<AppEnv>();
 
 // --- OWASP hardening ---
-app.use("*", securityHeaders({ hsts: tlsActive }));
+app.use("*", securityHeaders({ hsts: tlsActive && readConfig().hsts }));
 app.use("/api/*", csrfOriginCheck());
 app.use("/api/*", ipWhitelist());
 
@@ -135,6 +139,7 @@ const port = effectivePort();
 
 const server = Bun.serve({
   port,
+  hostname: effectiveHost(),
   // Pass the real socket address to Hono as env (no per-request Request clone).
   fetch(req, srv) {
     return app.fetch(req, { ip: srv.requestIP(req)?.address ?? "" });

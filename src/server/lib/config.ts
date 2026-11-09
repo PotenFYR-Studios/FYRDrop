@@ -9,8 +9,15 @@ import path from "node:path";
 
 export interface SystemConfig {
   port: number;
+  /** Bind address: 0.0.0.0 for every interface, or one specific address. */
+  host: string;
   networkMode: "auto" | "off" | "custom";
   tlsCommonName: string;
+  /** Custom certificate paths, used when networkMode is "custom". */
+  tlsCertPath: string;
+  tlsKeyPath: string;
+  /** Send HSTS when serving HTTPS. */
+  hsts: boolean;
   sessionTtlDays: number;
   trustProxy: boolean;
   showPinInLogs: boolean;
@@ -18,8 +25,12 @@ export interface SystemConfig {
 
 const DEFAULTS: SystemConfig = {
   port: 3000,
+  host: "0.0.0.0",
   networkMode: "auto",
   tlsCommonName: "fyrdrop.local",
+  tlsCertPath: "",
+  tlsKeyPath: "",
+  hsts: true,
   sessionTtlDays: 30,
   trustProxy: false,
   showPinInLogs: true,
@@ -69,4 +80,15 @@ export function effectiveNetworkMode(): "auto" | "off" | "custom" {
   if (env === "1" || env === "true" || env === "auto") return "auto";
   if (process.env.TLS_CERT_PATH && process.env.TLS_KEY_PATH) return "custom";
   return readConfig().networkMode;
+}
+
+/** Bind address, with HOST env winning over the saved config. */
+export function effectiveHost(): string {
+  return process.env.HOST?.trim() || readConfig().host || "0.0.0.0";
+}
+
+/** Custom certificate paths from the file (env TLS_CERT_PATH/TLS_KEY_PATH wins in index.ts). */
+export function customTlsPaths(): { cert?: string; key?: string } {
+  const c = readConfig();
+  return { cert: c.tlsCertPath || undefined, key: c.tlsKeyPath || undefined };
 }
