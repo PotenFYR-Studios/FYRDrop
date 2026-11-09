@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../App";
 import { api, timeAgo, type DeviceSession } from "../api";
 import { Icon } from "../icons";
-import { Avatar, Badge, Btn, Card, Input, Label, PageHeader, Spinner, StatCard, useSync, useToast } from "../ui";
+import { Avatar, Badge, Btn, Card, Input, Label, Modal, PageHeader, Spinner, StatCard, useSync, useToast } from "../ui";
 
 const PRESET_COLORS = [
   "#6366f1",
@@ -86,6 +86,27 @@ export default function Profile() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
   useSync(loadDevices, { scopes: ["sessions"] });
+
+  const [renameDevice, setRenameDevice] = useState<DeviceSession | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [renaming, setRenaming] = useState(false);
+
+  const saveDeviceName = async () => {
+    if (!renameDevice) return;
+    const name = renameValue.trim();
+    if (!name) return;
+    setRenaming(true);
+    try {
+      await api.editDevice(renameDevice.token, { deviceName: name });
+      push("ok", "Device renamed");
+      setRenameDevice(null);
+      loadDevices();
+    } catch (e: any) {
+      push("err", e?.message ?? "Could not rename this device");
+    } finally {
+      setRenaming(false);
+    }
+  };
 
   const revokeDevice = async (token: string, name: string) => {
     if (!window.confirm(`Revoke "${name}"? It will need the instance PIN again.`)) return;
@@ -358,6 +379,19 @@ export default function Profile() {
                       {d.hostName && d.hostName !== d.deviceName && <span className="mono">host {d.hostName}</span>}
                     </div>
                   </div>
+                  {d.isCurrent && (
+                    <button
+                      onClick={() => {
+                        setRenameDevice(d);
+                        setRenameValue(d.deviceName);
+                      }}
+                      className="rounded-lg p-1.5 text-slate-500 transition hover:bg-white/[0.06] hover:text-slate-200"
+                      title="Rename this device"
+                      aria-label={`Rename ${d.deviceName}`}
+                    >
+                      <Icon name="pencil" size={14} />
+                    </button>
+                  )}
                   {!d.isCurrent && (
                     <button
                       onClick={() => void revokeDevice(d.token, d.deviceName)}
@@ -374,6 +408,32 @@ export default function Profile() {
           </div>
         )}
       </Card>
+
+      <Modal open={renameDevice !== null} onClose={() => setRenameDevice(null)} title="Rename this device">
+        <div className="space-y-3">
+          <p className="text-xs text-slate-500">
+            The name was taken from this machine's host name. Changing it only affects the device you are using now.
+          </p>
+          <div>
+            <Label>Device name</Label>
+            <Input
+              value={renameValue}
+              maxLength={60}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void saveDeviceName()}
+              placeholder="Living room laptop"
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => setRenameDevice(null)}>
+              Cancel
+            </Btn>
+            <Btn onClick={() => void saveDeviceName()} disabled={renaming || !renameValue.trim()}>
+              {renaming ? <Spinner size={14} /> : <Icon name="check" size={14} />} Save name
+            </Btn>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

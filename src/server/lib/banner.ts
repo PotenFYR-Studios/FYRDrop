@@ -27,7 +27,7 @@ export function printBanner(opts: { port: number; scheme: "http" | "https"; urls
   const sep = () => console.log(`├${"─".repeat(W + 2)}┤`);
 
   console.log(`╭${"─".repeat(W + 2)}╮`);
-  line(`  FYRDrop · ${appName} · v1.1.0`);
+  line(`  FYRDrop · ${appName} · v1.0.0`);
   sep();
   line(`Instance PIN  ${pin ?? "(hidden - showPinInLogs is off)"}`);
   if (admin) {

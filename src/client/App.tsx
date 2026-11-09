@@ -388,14 +388,17 @@ function Root() {
     <AuthCtx.Provider value={ctx}>
       <BrowserRouter>
         <Routes>
-          <Route
-            path="/s/:token"
-            element={
-              <Suspense fallback={<div className="flex h-screen items-center justify-center"><Spinner size={28} /></div>}>
-                <SharePage />
-              </Suspense>
-            }
-          />
+          {["/s/:token", "/q/:token"].map((path) => (
+            <Route
+              key={path}
+              path={path}
+              element={
+                <Suspense fallback={<div className="flex h-screen items-center justify-center"><Spinner size={28} /></div>}>
+                  <SharePage />
+                </Suspense>
+              }
+            />
+          ))}
           <Route
             path="*"
             element={

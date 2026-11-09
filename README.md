@@ -118,8 +118,8 @@ Eggs use the official `ghcr.io/potenfyr-studios/fyrdrop` image - no runtime inst
 Every release ships standalone executables (Bun compile) for **linux x64/arm64, Windows x64, macOS x64/arm64**, plus a `fyrdrop-client-<tag>.tar.gz` bundle:
 
 ```bash
-tar -xzf fyrdrop-v1.1.0-linux-x64.tar.gz
-tar -xzf fyrdrop-client-v1.1.0.tar.gz -C dist/public   # client bundle → ./dist/public
+tar -xzf fyrdrop-v1.0.0-linux-x64.tar.gz
+tar -xzf fyrdrop-client-v1.0.0.tar.gz -C dist/public   # client bundle → ./dist/public
 TLS_ENABLED=auto PORT=3000 ./fyrdrop-linux-x64
 ```
 

@@ -48,15 +48,21 @@ sessionRoutes.get("/", (c) => {
   });
 });
 
-/** Rename a device and/or annotate its MAC (owner only; HTTP cannot see MACs). */
+/**
+ * Rename a device and/or annotate its MAC. Owners can edit any device; everyone
+ * can rename only the session they are currently signed in on.
+ */
 sessionRoutes.patch("/:token", async (c) => {
-  if (!isOwner(c.get("session"))) return c.json({ error: "Owner access required." }, 403);
+  const me = c.get("session");
   const token = c.req.param("token");
+  const isCurrent = token === me.token;
+  if (!isOwner(me) && !isCurrent) return c.json({ error: "Not found." }, 404);
   const row = db.select().from(sessions).where(eq(sessions.token, token)).limit(1).get();
   if (!row) return c.json({ error: "Not found." }, 404);
   const body = await c.req.json<{ macNote?: string; deviceName?: string }>().catch(() => null);
   const patch: { macNote?: string; deviceName?: string } = {};
   if (body?.macNote !== undefined) {
+    if (!isOwner(me)) return c.json({ error: "Only the owner can add MAC notes." }, 403);
     const mac = String(body.macNote).trim().toLowerCase();
     if (mac && !/^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/.test(mac)) return c.json({ error: "MAC must look like aa:bb:cc:dd:ee:ff." }, 400);
     patch.macNote = mac;

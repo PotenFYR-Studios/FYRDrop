@@ -31,7 +31,7 @@ export const authRoutes = new Hono<AppEnv>();
 // Auth payloads are tiny; refuse anything big before parsing (cheap DoS guard).
 authRoutes.use("*", bodyLimit({ maxSize: 512 * 1024, onError: (c) => c.json({ error: "Payload too large." }, 413) }));
 
-const VERSION = "1.1.0";
+const VERSION = "1.0.0";
 
 type AuditExtra = Omit<LogInput, "event" | "ok" | "detail" | "ip">;
 

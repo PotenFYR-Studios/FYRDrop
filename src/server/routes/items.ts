@@ -597,7 +597,12 @@ itemRoutes.post("/:id/quick-link", async (c) => {
     .all()
     .find((l) => (!l.expiresAt || l.expiresAt > now) && (l.maxDownloads == null || l.downloads < l.maxDownloads) && !l.pinHash);
   if (existing) return c.json({ token: existing.token, url: `/s/${existing.token}`, reused: true });
-  const token = crypto.randomBytes(12).toString("base64url");
+  const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let token = "";
+  for (let attempt = 0; attempt < 6; attempt++) {
+    token = Array.from(crypto.randomBytes(8), (b) => alphabet[b % alphabet.length]).join("");
+    if (!db.select({ token: shareLinks.token }).from(shareLinks).where(eq(shareLinks.token, token)).limit(1).get()) break;
+  }
   db.insert(shareLinks)
     .values({
       token,
@@ -626,7 +631,14 @@ itemRoutes.post("/:id/share", async (c) => {
   const pin = typeof body?.pin === "string" ? body.pin.trim() : "";
   if (pin && !PIN_RE.test(pin)) return c.json({ error: "Link PIN must be 4-10 digits." }, 400);
   const maxDl = Number(body?.maxDownloads);
-  const token = crypto.randomBytes(12).toString("base64url"); // 96 bits
+  // Short, URL-safe tokens: 8 characters from a 57 symbol alphabet (~46 bits).
+  const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let token = "";
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const bytes = crypto.randomBytes(8);
+    token = Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("");
+    if (!db.select({ token: shareLinks.token }).from(shareLinks).where(eq(shareLinks.token, token)).limit(1).get()) break;
+  }
   db.insert(shareLinks)
     .values({
       token,
