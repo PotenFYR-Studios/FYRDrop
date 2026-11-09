@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, humanSize, isHttpUrl, runLimited, uploadFile, type GroupSummary, type Item, type RemoteItem } from "../api";
-import { Badge, Btn, Card, Empty, ItemMeta, PageHeader, Progress, Spinner, useSync, useToast } from "../ui";
+import { Badge, Btn, Card, Empty, ItemMeta, Label, Modal, PageHeader, Progress, Spinner, useSync, useToast } from "../ui";
 import { Icon, mimeIcon } from "../icons";
 import ShareWizard from "./ShareWizard";
 import { AccessChips, AccessDialog, PreviewModal, UploadAccessDialog, type AccessState, toPayload } from "../components/Access";
@@ -22,12 +22,18 @@ export default function Files() {
   const [shareItem, setShareItem] = useState<Item | null>(null);
   const [preview, setPreview] = useState<Item | null>(null);
   const [accessItem, setAccessItem] = useState<Item | null>(null);
+  const [metaItem, setMetaItem] = useState<Item | null>(null);
+  const [metaGroup, setMetaGroup] = useState("");
+  const [metaCategory, setMetaCategory] = useState("");
+  const [metaLabels, setMetaLabels] = useState("");
+  const [metaBusy, setMetaBusy] = useState(false);
   const [groups, setGroups] = useState<GroupSummary[]>([]);
   const [groupId, setGroupId] = useState("");
   const [category, setCategory] = useState("");
   const [labels, setLabels] = useState("");
   const [params] = useSearchParams();
   const groupFilter = params.get("group") ?? "";
+  const [categoryFilter, setCategoryFilter] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const jobsRef = useRef(new Map<string, AbortController>());
 
@@ -74,8 +80,11 @@ export default function Files() {
   const visible = items.filter((i) => {
     if (tab !== "all" && i.type !== tab) return false;
     if (groupFilter && i.groupId !== groupFilter) return false;
+    if (categoryFilter && i.category !== categoryFilter) return false;
     return true;
   });
+
+  const categories = [...new Set(items.map((i) => i.category).filter(Boolean))].sort();
 
   useEffect(() => {
     api
@@ -128,6 +137,32 @@ export default function Files() {
       push("ok", `Copy placed on ${r.node.name}`);
     } catch (e: any) {
       push("err", e?.message ?? "Could not place a copy");
+    }
+  };
+
+  const openMeta = (it: Item) => {
+    setMetaItem(it);
+    setMetaGroup(it.groupId || "");
+    setMetaCategory(it.category || "");
+    setMetaLabels(it.labels || "");
+  };
+
+  const saveMeta = async () => {
+    if (!metaItem) return;
+    setMetaBusy(true);
+    try {
+      const r = await api.updateItemMeta(metaItem.id, {
+        groupId: metaGroup,
+        category: metaCategory.trim(),
+        labels: metaLabels.trim(),
+      });
+      setItems((list) => list.map((x) => (x.id === r.item.id ? r.item : x)));
+      setMetaItem(null);
+      push("ok", "Item details updated");
+    } catch (e: any) {
+      push("err", e?.message ?? "Could not update this item");
+    } finally {
+      setMetaBusy(false);
     }
   };
 
@@ -303,6 +338,19 @@ export default function Files() {
             {t.label}
           </button>
         ))}
+        {categories.length > 0 && (
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            className="h-8 rounded-lg border border-[#2a3247] bg-[#12161f] px-2 text-xs text-slate-300 outline-none focus:border-indigo-500"
+            aria-label="Filter by category"
+          >
+            <option value="">All categories</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        )}
         <span className="ml-auto text-[11px] text-slate-500">
           {visible.length} {visible.length === 1 ? "item" : "items"}
           {visible.length > 0 ? ` · ${humanSize(visible.reduce((n, i) => n + i.size, 0))}` : ""}
@@ -346,6 +394,11 @@ export default function Files() {
                 <Btn size="sm" variant="soft" onClick={() => openItem(it)}>
                   <Icon name="eye" size={14} /> Open
                 </Btn>
+                {(it.canWrite || it.canManage) && (
+                  <Btn size="sm" variant="soft" onClick={() => openMeta(it)} title="Group, category and labels">
+                    <Icon name="pencil" size={14} />
+                  </Btn>
+                )}
                 {it.canManage && (
                   <Btn size="sm" variant="soft" onClick={() => setAccessItem(it)}>
                     <Icon name="shield" size={14} /> Access
@@ -415,6 +468,49 @@ export default function Files() {
           </div>
         </Card>
       )}
+
+      <Modal open={metaItem !== null} onClose={() => setMetaItem(null)} title={metaItem ? `Edit ${metaItem.name}` : "Edit item"}>
+        <div className="space-y-3">
+          <div>
+            <Label>Group</Label>
+            <select
+              value={metaGroup}
+              onChange={(e) => setMetaGroup(e.target.value)}
+              className="w-full rounded-xl border border-[#2a3247] bg-[#12161f] px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+            >
+              <option value="">Default group</option>
+              {groups.map((g) => (
+                <option key={g.id} value={g.id}>{g.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label>Category</Label>
+            <input
+              value={metaCategory}
+              onChange={(e) => setMetaCategory(e.target.value)}
+              maxLength={60}
+              placeholder="Docs, Photos, Invoices…"
+              className="w-full rounded-xl border border-[#2a3247] bg-[#12161f] px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-indigo-500"
+            />
+          </div>
+          <div>
+            <Label>Labels</Label>
+            <input
+              value={metaLabels}
+              onChange={(e) => setMetaLabels(e.target.value)}
+              placeholder="comma, separated"
+              className="w-full rounded-xl border border-[#2a3247] bg-[#12161f] px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-indigo-500"
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => setMetaItem(null)}>Cancel</Btn>
+            <Btn onClick={() => void saveMeta()} disabled={metaBusy}>
+              {metaBusy ? <Spinner size={14} /> : <Icon name="check" size={14} />} Save
+            </Btn>
+          </div>
+        </div>
+      </Modal>
 
       <UploadAccessDialog
         files={pending}

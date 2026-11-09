@@ -553,6 +553,8 @@ export const api = {
   clusterScan: () => req<{ ok: boolean; found: ClusterDiscovered[]; discovered: ClusterDiscovered[] }>("/api/cluster/scan", post()),
   clusterRefresh: () => req<{ ok: boolean; results: { id: string; ok: boolean; error?: string }[]; nodes: ClusterNode[] }>("/api/cluster/refresh", post()),
   clusterFetch: (id: string, itemId: string) => req(`/api/cluster/${id}/fetch/${itemId}`, post()),
+  updateItemMeta: (id: string, p: { groupId?: string; category?: string; labels?: string }) =>
+    req<{ item: Item }>(`/api/items/${id}/meta`, patch(p)),
   replicateItem: (id: string) => req<{ ok: boolean; node: { id: string; name: string }; remoteId: string }>(`/api/items/${id}/replicate`, post()),
   clusterPush: (id: string, itemId: string) => req(`/api/cluster/${id}/push/${itemId}`, post()),
   clusterLeave: (id: string, force = false) => req<{ ok: boolean; reclaimed: number; warning?: string }>(`/api/cluster/${id}${force ? "?force=1" : ""}`, { method: "DELETE" }),
