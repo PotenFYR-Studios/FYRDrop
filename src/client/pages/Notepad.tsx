@@ -85,10 +85,51 @@ async function docxText(buf: ArrayBuffer): Promise<string> {
   throw new Error("No word/document.xml found");
 }
 
+/** Extract the text layer of a PDF in the browser. pdf.js is loaded on demand so it stays out of the main bundle. */
+async function pdfText(buf: ArrayBuffer): Promise<string> {
+  const [pdfjs, worker] = await Promise.all([
+    import("pdfjs-dist"),
+    import("pdfjs-dist/build/pdf.worker.min.mjs?url"),
+  ]);
+  pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
+  let doc;
+  try {
+    doc = await pdfjs.getDocument({ data: new Uint8Array(buf), isEvalSupported: false }).promise;
+  } catch (e: any) {
+    if (e?.name === "PasswordException") throw new Error("This PDF is password protected. Remove the password and try again.");
+    throw new Error("Could not open that PDF. It may be damaged.");
+  }
+  try {
+    const pages: string[] = [];
+    for (let p = 1; p <= doc.numPages; p++) {
+      const page = await doc.getPage(p);
+      const tc = await page.getTextContent();
+      let out = "";
+      let lastY: number | null = null;
+      for (const it of tc.items as any[]) {
+        if (typeof it.str !== "string") continue;
+        const y = Array.isArray(it.transform) ? it.transform[5] : null;
+        // A jump in baseline without an explicit EOL still means a new line.
+        if (lastY !== null && y !== null && Math.abs(y - lastY) > 2 && !out.endsWith("\n")) out += "\n";
+        out += it.str;
+        if (it.hasEOL) out += "\n";
+        if (y !== null) lastY = y;
+      }
+      pages.push(out.replace(/[ \t]+\n/g, "\n").trim());
+      page.cleanup();
+    }
+    const text = pages.filter(Boolean).join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
+    if (!text) throw new Error("This PDF has no text layer (it is probably a scan). Run OCR on it first.");
+    return text;
+  } finally {
+    await doc.destroy();
+  }
+}
+
 async function extractDocument(file: File): Promise<string> {
   const ext = (file.name.split(".").pop() ?? "").toLowerCase();
   if (ext === "docx") return docxText(await file.arrayBuffer());
-  if (ext === "pdf") throw new Error("PDF import is not supported yet. Copy the text, or export notes as PDF instead.");
+  if (ext === "pdf") return pdfText(await file.arrayBuffer());
   const raw = await file.text();
   if (["html", "htm"].includes(ext)) return stripHtml(raw);
   if (ext === "rtf") return stripRtf(raw);
