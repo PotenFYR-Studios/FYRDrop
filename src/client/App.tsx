@@ -15,6 +15,7 @@ const Files = lazy(() => import("./pages/Files"));
 const Notepad = lazy(() => import("./pages/Notepad"));
 const Links = lazy(() => import("./pages/Links"));
 const Groups = lazy(() => import("./pages/Groups"));
+const Trash = lazy(() => import("./pages/Trash"));
 const Gallery = lazy(() => import("./pages/Gallery"));
 const Transfer = lazy(() => import("./pages/Transfer"));
 const Covert = lazy(() => import("./pages/Covert"));
@@ -66,6 +67,7 @@ const NAV: NavItem[] = [
   { to: "/notepad", label: "Notepad", icon: "note" },
   { to: "/links", label: "Links", icon: "link" },
   { to: "/groups", label: "Groups", icon: "users" },
+  { to: "/trash", label: "Trash", icon: "trash" },
   { to: "/gallery", label: "Gallery", icon: "image" },
   { to: "/transfer", label: "Device Transfer", icon: "transfer" },
   { to: "/covert", label: "Covert Tools", icon: "shield" },
@@ -287,6 +289,7 @@ function AuthedApp() {
         <Route path="/notepad" element={<Notepad />} />
         <Route path="/links" element={<Links />} />
         <Route path="/groups" element={<Groups />} />
+        <Route path="/trash" element={<Trash />} />
         <Route path="/gallery" element={<Gallery />} />
         <Route path="/transfer" element={<Transfer />} />
         <Route path="/covert" element={<Covert />} />

@@ -171,6 +171,7 @@ ALTER TABLE settings ADD COLUMN storage_quota_mb INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE settings ADD COLUMN pin_enc TEXT NOT NULL DEFAULT '';
 ALTER TABLE items ADD COLUMN audience TEXT NOT NULL DEFAULT 'everyone';
 ALTER TABLE items ADD COLUMN group_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE items ADD COLUMN deleted_at INTEGER;
 ALTER TABLE items ADD COLUMN category TEXT NOT NULL DEFAULT '';
 ALTER TABLE items ADD COLUMN labels TEXT NOT NULL DEFAULT '';
 ALTER TABLE items ADD COLUMN audience_groups TEXT NOT NULL DEFAULT '';
@@ -236,6 +237,7 @@ CREATE INDEX IF NOT EXISTS audit_actor_idx ON audit_log (actor_id, ts);
 CREATE INDEX IF NOT EXISTS user_pins_item_idx ON user_pins (item_id);
 CREATE INDEX IF NOT EXISTS group_members_user_idx ON group_members (user_id);
 CREATE INDEX IF NOT EXISTS items_group_idx ON items (group_id);
+CREATE INDEX IF NOT EXISTS items_deleted_idx ON items (deleted_at);
 `;
 
 /** Create tables when missing (idempotent, safe on every boot). */
@@ -300,6 +302,30 @@ export function purgeExpired(now = Date.now()): number {
   for (const row of expired) {
     if (row.stored_name) {
       // refs are "<unitId>:<filename>"; legacy refs resolve to the primary dir
+      const idx = row.stored_name.indexOf(":");
+      const unitId = idx === -1 ? null : row.stored_name.slice(0, idx);
+      const filename = idx === -1 ? row.stored_name : row.stored_name.slice(idx + 1);
+      let dir = dirs.files;
+      if (unitId) {
+        const unit = sqlite.query<{ path: string }, [string]>("SELECT path FROM storage_units WHERE id = ?").get(unitId);
+        if (unit?.path) dir = path.isAbsolute(unit.path) ? unit.path : path.resolve(unit.path);
+      }
+      fs.rmSync(path.join(dir, path.basename(filename)), { force: true });
+    }
+    if (row.thumb_name) fs.rmSync(path.join(dirs.thumbs, path.basename(row.thumb_name)), { force: true });
+    sqlite.query("DELETE FROM share_links WHERE item_id = ?").run(row.id);
+    sqlite.query("DELETE FROM user_pins WHERE item_id = ?").run(row.id);
+    sqlite.query("DELETE FROM items WHERE id = ?").run(row.id);
+  }
+  // Trash older than 30 days is removed for good (bytes included).
+  const cutoff = now - 30 * 24 * 3600_000;
+  const trashed = sqlite
+    .query<{ id: string; stored_name: string | null; thumb_name: string | null }, [number]>(
+      "SELECT id, stored_name, thumb_name FROM items WHERE deleted_at IS NOT NULL AND deleted_at <= ?",
+    )
+    .all(cutoff);
+  for (const row of trashed) {
+    if (row.stored_name) {
       const idx = row.stored_name.indexOf(":");
       const unitId = idx === -1 ? null : row.stored_name.slice(0, idx);
       const filename = idx === -1 ? row.stored_name : row.stored_name.slice(idx + 1);

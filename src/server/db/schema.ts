@@ -85,6 +85,8 @@ export const items = sqliteTable("items", {
   /** Quick link: pinned to dashboard. */
   pinned: integer("pinned").notNull().default(0),
   downloads: integer("downloads").notNull().default(0),
+  /** Set when the item is moved to trash; null means live. */
+  deletedAt: integer("deleted_at"),
   createdAt: integer("created_at").notNull(),
   /** Unix timestamp; null = never expires. */
   expiresAt: integer("expires_at"),

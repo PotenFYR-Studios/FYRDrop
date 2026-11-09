@@ -147,7 +147,7 @@ function serialize(row: Item, session: SessionCtx, opts: { withContent?: boolean
 
 function load(id: string) {
   const row = db.select().from(items).where(eq(items.id, id)).limit(1).get();
-  if (!row || (row.expiresAt && row.expiresAt <= Date.now())) return null;
+  if (!row || row.deletedAt || (row.expiresAt && row.expiresAt <= Date.now())) return null;
   return row;
 }
 
@@ -175,6 +175,7 @@ function baseRow(c: Context, partial: Partial<Item> & Pick<Item, "type" | "name"
     deleteGroups: "",
     pinned: 0,
     downloads: 0,
+    deletedAt: null,
     createdAt: Date.now(),
     expiresAt: null,
     ...partial,
@@ -188,7 +189,7 @@ itemRoutes.get("/", (c) => {
   const type = c.req.query("type");
   if (type && !ITEM_TYPES.has(type)) return c.json({ error: "Unknown type." }, 400);
   const now = Date.now();
-  const live = or(isNull(items.expiresAt), gt(items.expiresAt, now));
+  const live = and(isNull(items.deletedAt), or(isNull(items.expiresAt), gt(items.expiresAt, now)));
   const rows = db
     .select()
     .from(items)
@@ -895,19 +896,57 @@ itemRoutes.patch("/:id/pin", async (c) => {
   return c.json({ ok: true, pinned: !!body?.pinned });
 });
 
+/** Items the signed-in user can restore. */
+itemRoutes.get("/trash/list", (c) => {
+  const session = c.get("session");
+  const now = Date.now();
+  const rows = db
+    .select()
+    .from(items)
+    .where(and(sql`${items.deletedAt} is not null`, or(isNull(items.expiresAt), gt(items.expiresAt, now))))
+    .orderBy(sql`${items.deletedAt} desc`)
+    .all();
+  const mine = rows.filter((r) => r.userId === session.user?.id || session.user?.role === "owner");
+  const pins = pinnedSet(session.user?.id);
+  return c.json({ items: mine.map((r) => serialize(r, session, { withContent: r.type === "text" || r.type === "url", pins })) });
+});
+
+itemRoutes.post("/:id/restore", (c) => {
+  const row = db.select().from(items).where(eq(items.id, c.req.param("id"))).limit(1).get();
+  const session = c.get("session");
+  if (!row || !row.deletedAt) return c.json({ error: "Not found in trash." }, 404);
+  if (!canManage(row, session)) return c.json({ error: "Only the owner or uploader can restore this." }, 403);
+  db.update(items).set({ deletedAt: null }).where(eq(items.id, row.id)).run();
+  publish({ scope: "items", action: "restored", id: row.id });
+  auditRequest(c, "item.restored", true, `Restored "${row.name}" from trash`, { target: row.name });
+  return c.json({ ok: true });
+});
+
+itemRoutes.delete("/:id/purge", (c) => {
+  const row = db.select().from(items).where(eq(items.id, c.req.param("id"))).limit(1).get();
+  const session = c.get("session");
+  if (!row || !row.deletedAt) return c.json({ error: "Not found in trash." }, 404);
+  if (!canManage(row, session)) return c.json({ error: "Only the owner or uploader can delete this forever." }, 403);
+  db.delete(shareLinks).where(eq(shareLinks.itemId, row.id)).run();
+  db.delete(userPins).where(eq(userPins.itemId, row.id)).run();
+  if (row.storedName) deleteStoredFile(row.storedName);
+  deleteThumb(row.thumbName);
+  db.delete(items).where(eq(items.id, row.id)).run();
+  publish({ scope: "items", action: "purged", id: row.id });
+  auditRequest(c, "item.purged", true, `Deleted "${row.name}" forever`, { target: row.name, severity: "warn" });
+  return c.json({ ok: true });
+});
+
 itemRoutes.delete("/:id", (c) => {
   const row = db.select().from(items).where(eq(items.id, c.req.param("id"))).limit(1).get();
   const session = c.get("session");
   if (!row || !visibleTo(row, session)) return c.json({ error: "Not found." }, 404);
   if (!canDelete(row, session)) return c.json({ error: "You do not have delete access to this item." }, 403);
-  // Delete the row first so concurrent readers stop finding it, then the bytes.
-  const gone = db.delete(items).where(eq(items.id, row.id)).returning({ id: items.id }).all();
-  if (gone.length === 0) return c.json({ ok: true }); // a parallel delete won the race
+  // Trash, not erase: links and pins stop working at once, bytes stay for 30 days.
+  db.update(items).set({ deletedAt: Date.now() }).where(eq(items.id, row.id)).run();
   db.delete(shareLinks).where(eq(shareLinks.itemId, row.id)).run();
   db.delete(userPins).where(eq(userPins.itemId, row.id)).run();
-  if (row.storedName) deleteStoredFile(row.storedName);
-  deleteThumb(row.thumbName);
   publish({ scope: "items", action: "deleted", id: row.id });
-  auditRequest(c, "item.deleted", true, `Deleted "${row.name}"`, { target: row.name, meta: { type: row.type, size: row.size }, severity: "warn" });
-  return c.json({ ok: true });
+  auditRequest(c, "item.trashed", true, `Moved "${row.name}" to trash`, { target: row.name, meta: { type: row.type, size: row.size }, severity: "warn" });
+  return c.json({ ok: true, trashed: true });
 });

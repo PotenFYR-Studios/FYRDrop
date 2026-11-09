@@ -204,10 +204,10 @@ export default function Files() {
   };
 
   const remove = async (item: Item) => {
-    if (!window.confirm(`Delete "${item.name}"? This cannot be undone.`)) return;
+    if (!window.confirm(`Move "${item.name}" to trash? It stays recoverable for 30 days.`)) return;
     try {
       await api.deleteItem(item.id);
-      push("ok", "Deleted");
+      push("ok", "Moved to trash");
       void reload();
     } catch (e: any) {
       push("err", e.message ?? "Delete failed");

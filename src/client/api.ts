@@ -13,6 +13,7 @@ export interface Item {
   pinned: number;
   downloads: number;
   createdAt: number;
+  deletedAt?: number | null;
   expiresAt: number | null;
   hasContent: boolean;
   preview?: string;
@@ -162,6 +163,7 @@ export interface ShareLink {
   itemId: string;
   url: string;
   createdAt: number;
+  deletedAt?: number | null;
   expiresAt: number | null;
   maxDownloads: number | null;
   downloads: number;
@@ -526,6 +528,9 @@ export const api = {
   remoteItems: () => req<{ items: RemoteItem[] }>("/api/remote/items"),
 
   // groups
+  trash: () => req<{ items: Item[] }>("/api/items/trash/list"),
+  restoreItem: (id: string) => req<{ ok: boolean }>(`/api/items/${id}/restore`, post()),
+  purgeItem: (id: string) => req<{ ok: boolean }>(`/api/items/${id}/purge`, { method: "DELETE" }),
   groups: () => req<{ groups: GroupSummary[] }>("/api/groups"),
   createGroup: (p: { name: string; description?: string; color?: string }) => req<{ group: GroupSummary }>("/api/groups", post(p)),
   group: (id: string) => req<GroupDetail>(`/api/groups/${id}`),
