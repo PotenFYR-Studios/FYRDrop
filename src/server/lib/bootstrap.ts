@@ -64,6 +64,11 @@ function ensureOwner() {
       color: "#6366f1",
       role: "owner",
       isBlocked: 0,
+      email: null,
+      emailVerified: 0,
+      totpSecret: null,
+      totpEnabled: 0,
+      recoveryCodes: "",
       createdAt: now,
       lastSeenAt: now,
     };

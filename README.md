@@ -12,15 +12,18 @@ Files · Notepad · Links · Gallery · Certificates · P2P Transfer · Covert T
 
 | Area | What you get |
 | --- | --- |
-| **Files** | Drag & drop / paste multi-upload, auto thumbnails, expiry, download counters, chunked uploads for huge files (streamed straight to disk) |
-| **Notepad** | Shared, editable notes with per-note read/write/delete access |
+| **Files** | Drag & drop / paste multi-upload, auto thumbnails, expiry, download counters, chunked uploads for huge files (streamed straight to disk) that **resume after a reload, a closed tab or a server restart** |
+| **Notepad** | Shared, editable notes with per-note read/write/delete access; import text, Markdown, HTML, RTF, Word and **PDF** (text layer, extracted in the browser) |
 | **Links** | Saved URLs with local monogram tiles (no third-party favicon requests), one-click open/copy, pinnable to the dashboard |
 | **Gallery** | Image grid with WebP thumbnails, lightbox, realtime updates |
-| **Share links** | Token-gated public links (`/s/<token>`) with optional per-link PIN (signed, short-lived grant - never in the URL), recipient note, expiry and atomic download caps |
+| **Share links** | Token-gated public links (`/s/<token>`) with optional per-link PIN (signed, short-lived grant - never in the URL), recipient note, expiry and atomic download caps. A **Share links** page shows opens, downloads, unique visitors, devices and referring sites per link - without storing IP addresses |
 | **Certificates** | Generate self-signed TLS certificates in-app or upload existing PEM pairs; every signed-in user can download the public cert, only the owner can download private keys |
 | **Device transfer** | True peer-to-peer WebRTC file transfer between paired devices (server only does signaling - files never touch the server) |
 | **Covert tools** | QR transfer, lossless text-to-image pixel encoding and base64 wrapping for networks where DLP software blocks normal file sharing |
-| **Federation** | Register other FYRDrop instances and broadcast/push items between them (token-authenticated) |
+| **Cluster** | Pair instances with mutual approval and X25519-derived keys, browse and push items, and keep **verified replicas** of your items on other nodes with automatic rebalancing and self-repair |
+| **Backups** | Encrypted (passphrase) or plain tar backups of the database, keys and settings, optionally with every stored file; scheduled backups with retention; restore from a local or uploaded backup with rollback |
+| **Notifications** | Bell inbox for shares, sign-ins, security changes, storage and instance alerts; optional email copies per event |
+| **API & webhooks** | Personal API keys (read or read + write) and signed webhooks for item and share events |
 | **Accounts** | Instance PIN pairs a device; each person then signs in to their own account (or registers one). The owner account sees every account and device, and the profile page lists your own devices |
 | **Admin** | Analytics, a **Devices** page that ties every session to its account (rename, MAC note, revoke), a filterable **Activity log** with actor/target/IP and expandable details, storage breakdown & safe orphan cleanup, security center, instance settings, account management |
 | **Realtime** | A single shared SSE stream per browser tab keeps every page live |
@@ -37,7 +40,9 @@ Files · Notepad · Links · Gallery · Certificates · P2P Transfer · Covert T
 - **Per-item access model** - every item has read / write / delete scopes (`everyone`, `selected`, `private`). New items default to *everyone can read, only the uploader (and owner) can edit or delete*. Write/delete never exceed read.
 - **Honest client IPs** - `X-Forwarded-For` is ignored unless `TRUST_PROXY=1`, so rate limits and the IP whitelist can't be spoofed.
 - **Stateless signed sessions** - HMAC-SHA256 tokens (no DB write per request), instant device revocation, per-user blocking with audit trail.
-- **Bounded memory** - rate-limit maps, upload registries and the audit log are capped and swept; abandoned chunked uploads expire after 6 hours.
+- **Two-step sign-in** - optional authenticator-app codes (TOTP) and passkeys / security keys as a second factor, with one-time recovery codes. The second step is bound to the device that passed the password step; codes cannot be replayed. The owner can reset a person's second factor.
+- **Password reset by email** - with SMTP configured, people confirm an address and can reset a forgotten password through a single-use link that expires after 30 minutes. Links are built from the configured public URL, never from the request's Host header, and the token travels in the URL fragment.
+- **Bounded memory** - rate-limit maps, upload registries and the audit log are capped and swept; unfinished chunked uploads are kept for 7 days so they can be resumed, then removed.
 - **Activity log** - every sign-in, upload, download, share link, access change, certificate action, storage cleanup, cluster join and account change is recorded with the account that did it, the target, the client IP and a machine-readable detail blob. Filter by category, status, time range or account; new events arrive live. Admin → Security keeps a short recent view with a link to the full log.
 - **Device inventory** - Admin → Devices lists every session with its account chip, host name, address plus address source, browser/OS, screen, first and last seen dates and MAC. Rename a device, annotate it, or revoke it; revoking asks for the instance PIN next time. Each person sees the same list for their own sessions under Profile.
 - **Automatic device identity** - opening the app names the device before the PIN is even entered: the server resolves the host name of the client address through DNS and the OS resolver, and falls back to the browser and system name. The page also reports platform, screen, time zone, language, CPU threads, memory and, when the browser allows it, a local IPv4 gathered from WebRTC ICE candidates. Everything is stored with the session, not in a cookie.
@@ -152,7 +157,7 @@ Uploads land on the **storage unit with the most free space** - point a unit at 
 
 ## 📦 Large files
 
-Files over 32 MB must use the chunked path (`/api/items/upload/begin` → `PUT …/chunk/:id/:index` → `/finish`). Chunks are streamed to disk, never held in memory, and assembled with a streamed AES-256-GCM container that declares its format in the header (`FDCHUNK1`). On boot the server **verifies and repairs** files written by older versions in the legacy raw-append layout, so existing large uploads keep working after an upgrade.
+Files over 32 MB must use the chunked path (`/api/items/upload/begin` → `PUT …/chunk/:id/:index` → `/finish`). Uploads in progress are stored in the database, so they survive a page reload and a server restart: the Files page lists **Unfinished uploads**, and picking the same file again (or pressing Resume) continues with the chunks the server does not have yet. `GET /api/items/upload/pending` lists them; `begin` with the same `fingerprint` (or a `resumeId`) returns the chunks already received. Chunks are streamed to disk, never held in memory, and assembled with a streamed AES-256-GCM container that declares its format in the header (`FDCHUNK1`). On boot the server **verifies and repairs** files written by older versions in the legacy raw-append layout, so existing large uploads keep working after an upgrade.
 
 ## 🔗 Clusters
 
@@ -166,6 +171,40 @@ Link multiple FYRDrop instances with strong keys so they can browse each other's
 Manual pairing still works by entering the other instance's address; there is no code to copy.
 
 From Admin → Cluster you can **refresh** a node's manifest (items + storage), **push** local items into a peer's storage, and **unlink**. Only items readable by everyone are advertised and transferable; per-user cross-instance access is not part of this version. Unlinking asks the peer to hand back everything, deletes the copies, destroys the link key on both sides, and removes any pending requests. Unlinking triggers a **reclaim**: the peer hands back everything you pushed into its storage, deletes its copies, and both sides forget the link. If the peer can't be reached, force-unlink is offered with an explicit data-loss warning. Storage pressure (quota/full disk) is reported as a 507 with `needsSpace: true`, so the UI tells you exactly which node needs more space.
+
+### Replicas & rebalancing
+
+Admin → Cluster → **Replicas & rebalancing** keeps copies of local items on linked nodes. Choose how many copies (per item, on other nodes), whether every item or only items with a label are copied, how much free space each node must keep, and how much may be sent per pass. Every maintenance pass (or **Run a pass now**):
+
+- places missing copies on the node with the most free space,
+- verifies copies by SHA-256 on the peer and replaces missing or altered ones,
+- restores a local item whose file went missing from a healthy copy,
+- removes copies of deleted or expired items and trims extra copies,
+- moves copies off a node that dropped below its free-space headroom.
+
+Copies are private items on the peer, hidden from its lists and never copied again. They travel over the sealed cluster channel, so items over 64 MB are not copied. Unlinking a node hands its copies back like any other reclaim.
+
+## 💾 Backups
+
+Admin → **Backups** creates a snapshot of the database (`VACUUM INTO`, consistent while the server runs), the keys directory, `config.json`, TLS files, certificates, thumbnails and - optionally - every stored file. With a passphrase the archive is a `.fyb` container (scrypt + AES-256-GCM in authenticated 1 MB frames; truncation and tampering are detected). Without one it is a standard `.tar`. Backups contain the master key, so encrypt any backup that leaves the server.
+
+Automatic backups run on a schedule (every N hours, keep the last N, metadata only or with files). **Restore** verifies the whole archive, unpacks it into `restore_staging`, and swaps it in at the next start before SQLite opens; the replaced data is kept in `restore_previous/<time>` (the two most recent are kept), and any failure during the swap puts the old data back. Backups from another machine can be uploaded from the same page.
+
+## 🔑 API keys & webhooks
+
+Profile → **API keys & webhooks**. A key is sent as `Authorization: Bearer fyd_…`; read keys can only `GET`, write keys can also create, change and delete. Keys never reach admin, backup, cluster or account-security endpoints and cannot create keys or webhooks. Only a SHA-256 of the key is stored.
+
+Webhooks receive `POST` JSON `{"id","event","createdAt","data"}` for `item.created`, `item.updated`, `item.deleted`, `share.created` and `share.downloaded` on your own items. Verify `X-FYRDrop-Signature`:
+
+```
+sha256=hex(HMAC_SHA256(secret, X-FYRDrop-Timestamp + "." + raw_body))
+```
+
+Failed deliveries are retried after 10 s, 1 min and 5 min with the same `X-FYRDrop-Delivery` id; after 20 failures in a row the hook turns itself off. Redirects are not followed, link-local / metadata addresses are always refused, and only the instance owner may target loopback or private-network addresses.
+
+## ✉️ Email
+
+Settings → **Email (SMTP)** sets the relay (STARTTLS, TLS or plain for LAN relays), the sender and the public address of the instance. Email is used for address confirmation codes, password reset links and the notifications people opt into. For development, `FYRDROP_MAIL_OUTBOX=<dir>` writes each message as JSON into that directory instead of sending it.
 
 ## ⚙️ Scaling
 
@@ -245,7 +284,16 @@ GET  /api/admin/stats|storage|security    analytics, storage, security (owner on
 GET  /api/admin/devices                    every session with its account (owner only)
 GET  /api/admin/logs                       activity log: q, category, severity, actor, days, before
 PATCH/DELETE /api/sessions/:token          rename/MAC-note or revoke a device (owner, or your own)
-GET/POST /api/federation/…                instance federation & broadcast
+POST /api/account/login/verify            second factor (TOTP, recovery code or passkey)
+POST /api/account/password/forgot|reset   email reset link · set a new password with it
+GET  /api/account/security                2FA, passkeys, email status (+ /totp/*, /passkeys/*, /email/*)
+GET  /api/notifications                   inbox (+ /read, /prefs)
+GET/POST /api/keys · /api/webhooks        personal API keys · webhooks (+ /:id/test, /deliveries)
+GET  /api/items/shares/mine               your share links with totals (+ /:id/share/:token/stats)
+GET  /api/items/upload/pending            unfinished chunked uploads to resume
+GET/POST /api/backups                     backups (+ /file/:name, /schedule, /upload/*, /inspect, /restore)
+GET  /api/cluster/replication             replica policy + status (+ /policy, /run)
+GET/POST /api/mail                        SMTP settings (+ /test), owner only
 ```
 
 ## 🗂 Project layout
@@ -261,9 +309,9 @@ Dockerfile          multi-arch production image
 ## 🗺 Roadmap
 
 - [ ] Postgres/MySQL driver option for extreme horizontal scale
-- [ ] Federation pull-sync + peer discovery
 - [ ] TURN server integration for restrictive NATs
-- [ ] Mobile PWA install + push notifications
+- [ ] Web push notifications (in-app and email notifications exist)
+- [ ] Cluster replicas for items over 64 MB (streamed transfer)
 
 ## 📄 License
 

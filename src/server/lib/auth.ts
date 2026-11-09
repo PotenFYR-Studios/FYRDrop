@@ -8,6 +8,7 @@ import { db } from "../db";
 import { auditLog, sessions, revokedTokens, users } from "../db/schema";
 import { effectiveTtlDays } from "./config";
 import { clientIp, requestProto } from "./net";
+import { verifyApiKey, keyScopes } from "./apikeys";
 
 /**
  * Stateless signed session tokens (HMAC-SHA256) - no DB write on the hot path.
@@ -26,7 +27,7 @@ const TTL_DAYS = () => effectiveTtlDays();
 
 export type UserRow = typeof users.$inferSelect;
 export type SessionRow = typeof sessions.$inferSelect;
-export type SessionCtx = SessionRow & { token: string; user: UserRow | null };
+export type SessionCtx = SessionRow & { token: string; user: UserRow | null; apiKey?: { id: string; name: string; scopes: Set<string> } };
 
 let signingSecret: Buffer | null = null;
 const revokedCache = new Set<string>();
@@ -166,7 +167,7 @@ export function sessionFromContext(c: Context): SessionCtx | undefined {
 
 function loadSession(c: Context): SessionCtx | undefined {
   const token = getCookie(c, SESSION_COOKIE);
-  if (!token) return undefined;
+  if (!token) return apiKeySession(c);
   const info = verifyToken(token);
   if (!info) return undefined;
   const row = db.select().from(sessions).where(eq(sessions.token, info.sessionId)).limit(1).get();
@@ -185,6 +186,37 @@ function loadSession(c: Context): SessionCtx | undefined {
   return { ...row, token: info.sessionId, user };
 }
 
+/** A request authenticated with a personal API key acts as the key's owner. */
+function apiKeySession(c: Context): SessionCtx | undefined {
+  const key = verifyApiKey(c.req.header("authorization"));
+  if (!key) return undefined;
+  const user = db.select().from(users).where(eq(users.id, key.userId)).limit(1).get() ?? null;
+  if (!user) return undefined;
+  const now = Date.now();
+  return {
+    token: `apikey:${key.id}`,
+    deviceName: `API key "${key.name}"`,
+    hostName: "",
+    userAgent: (c.req.header("user-agent") ?? "").slice(0, 400),
+    ip: clientIp(c),
+    ipSource: "socket",
+    reportedIp: "",
+    mac: "",
+    deviceMeta: "",
+    userId: user.id,
+    macNote: "",
+    createdAt: key.createdAt,
+    lastSeenAt: now,
+    expiresAt: key.expiresAt ?? now + 86_400_000,
+    user,
+    apiKey: { id: key.id, name: key.name, scopes: keyScopes(key) },
+  };
+}
+
+/** Paths an API key may never use, whatever its scopes. */
+const KEY_FORBIDDEN = ["/api/account", "/api/keys", "/api/webhooks", "/api/auth", "/api/admin", "/api/backups", "/api/mail", "/api/cluster", "/api/users/all", "/api/sessions"];
+const READ_METHODS = new Set(["GET", "HEAD"]);
+
 function auditBlocked(c: Context, name: string) {
   const ip = clientIp(c);
   const key = `${ip}:${name}`;
@@ -201,6 +233,14 @@ function gate(c: Context, level: "device" | "user" | "owner"): Response | null {
   if (session.user?.isBlocked) {
     auditBlocked(c, session.user.name);
     return c.json({ error: "This account has been blocked by the administrator." }, 403);
+  }
+  if (session.apiKey) {
+    if (level === "owner" || KEY_FORBIDDEN.some((p) => c.req.path === p || c.req.path.startsWith(p + "/"))) {
+      return c.json({ error: "API keys cannot use this endpoint. Sign in with the browser instead." }, 403);
+    }
+    if (!READ_METHODS.has(c.req.method) && !session.apiKey.scopes.has("write")) {
+      return c.json({ error: "This API key is read-only." }, 403);
+    }
   }
   if (level !== "device") {
     if (!session.user) return c.json({ error: "Sign in to your account first.", needsAccount: true }, 401);
@@ -229,8 +269,8 @@ export function isOwner(session: SessionCtx | undefined) {
 /** Strip secrets before a user row leaves the server. */
 export function publicUser(u: UserRow | null | undefined) {
   if (!u) return null;
-  const { passwordHash, ...rest } = u;
-  return { ...rest, hasPassword: !!passwordHash };
+  const { passwordHash, totpSecret, recoveryCodes, ...rest } = u;
+  return { ...rest, hasPassword: !!passwordHash, recoveryCodesLeft: recoveryCodes ? recoveryCodes.split(",").filter(Boolean).length : 0 };
 }
 
 /** Periodic maintenance: expired sessions, old revocations, throttle maps. */

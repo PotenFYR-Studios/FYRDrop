@@ -76,7 +76,8 @@ function orphans() {
 
 adminRoutes.get("/stats", (c) => {
   const now = Date.now();
-  const live = or(isNull(items.expiresAt), gt(items.expiresAt, now));
+  // Copies kept for other nodes are storage, not content: keep them out of "recent" and "top".
+  const live = and(or(isNull(items.expiresAt), gt(items.expiresAt, now)), isNull(items.replicaOf));
   const byType = (["file", "image", "text", "url"] as const).map((t) => {
     const r = db
       .select({ n: sql<number>`count(*)`, bytes: sql<number>`coalesce(sum(${items.size}),0)`, dl: sql<number>`coalesce(sum(${items.downloads}),0)` })

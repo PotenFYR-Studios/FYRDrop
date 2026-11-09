@@ -36,7 +36,9 @@ export default function SharePage() {
     if (!token) return;
     setState("loading");
     try {
-      const m = await api.shareMeta(token);
+      // Only the referring site's host is kept, never the full address.
+      const ref = document.referrer && !document.referrer.startsWith(window.location.origin) ? document.referrer : undefined;
+      const m = await api.shareMeta(token, ref);
       setMeta(m);
       setGrant(typeof m.grant === "string" ? m.grant : null);
       setPinOk(false);

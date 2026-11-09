@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from "react";
  */
 
 export type SyncStatus = "connecting" | "online" | "offline";
-export type SyncEvent = { scope: "items" | "certs" | "sessions" | "settings" | "audit"; action: string; id?: string };
+export type SyncEvent = { scope: "items" | "certs" | "sessions" | "settings" | "audit" | "notifications"; action: string; id?: string; userId?: string };
 
 type SyncFn = (e: SyncEvent) => void;
 type SignalFn = (msg: any) => void;

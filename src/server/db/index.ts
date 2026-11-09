@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/bun-sqlite";
 import path from "node:path";
 import fs from "node:fs";
 import * as schema from "./schema";
+import { applyStagedRestore } from "../lib/restore-boot";
 
 const dataDir = process.env.DATA_DIR ?? "./data";
 
@@ -22,6 +23,8 @@ export function ensureDirs() {
 
 export const dbFile = path.join(dirs.data, "fyrdrop.db");
 
+// A restore staged from the admin UI is swapped in before SQLite opens the file.
+applyStagedRestore(dirs.data);
 ensureDirs();
 
 /** SQLite connection used by drizzle. */
@@ -240,6 +243,123 @@ CREATE INDEX IF NOT EXISTS user_pins_item_idx ON user_pins (item_id);
 CREATE INDEX IF NOT EXISTS group_members_user_idx ON group_members (user_id);
 CREATE INDEX IF NOT EXISTS items_group_idx ON items (group_id);
 CREATE INDEX IF NOT EXISTS items_deleted_idx ON items (deleted_at);
+CREATE TABLE IF NOT EXISTS uploads (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  mime TEXT NOT NULL DEFAULT 'application/octet-stream',
+  size INTEGER NOT NULL,
+  chunk_size INTEGER NOT NULL,
+  fingerprint TEXT NOT NULL DEFAULT '',
+  meta TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL,
+  last_activity INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS uploads_user_idx ON uploads (user_id, fingerprint);
+ALTER TABLE users ADD COLUMN email TEXT;
+ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN totp_secret TEXT;
+ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN recovery_codes TEXT NOT NULL DEFAULT '';
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_idx ON users (email) WHERE email IS NOT NULL AND email_verified = 1;
+CREATE TABLE IF NOT EXISTS webauthn_credentials (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  rp_id TEXT NOT NULL,
+  public_key TEXT NOT NULL,
+  counter INTEGER NOT NULL DEFAULT 0,
+  transports TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL DEFAULT 'Passkey',
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS webauthn_user_idx ON webauthn_credentials (user_id);
+CREATE TABLE IF NOT EXISTS password_resets (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS password_resets_user_idx ON password_resets (user_id);
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  link TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  read_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS notifications_user_idx ON notifications (user_id, id);
+CREATE TABLE IF NOT EXISTS api_keys (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  secret_hash TEXT NOT NULL,
+  scopes TEXT NOT NULL DEFAULT 'read',
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER,
+  expires_at INTEGER,
+  revoked_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS api_keys_user_idx ON api_keys (user_id);
+CREATE TABLE IF NOT EXISTS webhooks (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  url TEXT NOT NULL,
+  secret_enc TEXT NOT NULL,
+  events TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  failures INTEGER NOT NULL DEFAULT 0,
+  last_status TEXT NOT NULL DEFAULT 'never',
+  last_delivery_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS webhooks_user_idx ON webhooks (user_id);
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  webhook_id TEXT NOT NULL,
+  delivery_id TEXT NOT NULL,
+  event TEXT NOT NULL,
+  ok INTEGER NOT NULL DEFAULT 0,
+  status_code INTEGER,
+  error TEXT NOT NULL DEFAULT '',
+  attempt INTEGER NOT NULL DEFAULT 1,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS webhook_deliveries_hook_idx ON webhook_deliveries (webhook_id, id);
+ALTER TABLE share_links ADD COLUMN created_by_id TEXT;
+CREATE TABLE IF NOT EXISTS share_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  token TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  ts INTEGER NOT NULL,
+  visitor TEXT NOT NULL DEFAULT '',
+  device TEXT NOT NULL DEFAULT '',
+  referrer TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS share_events_token_idx ON share_events (token, ts);
+CREATE INDEX IF NOT EXISTS share_events_ts_idx ON share_events (ts);
+ALTER TABLE items ADD COLUMN replica_of TEXT;
+CREATE INDEX IF NOT EXISTS items_replica_idx ON items (cluster_origin, replica_of);
+CREATE TABLE IF NOT EXISTS replicas (
+  item_id TEXT NOT NULL,
+  node_id TEXT NOT NULL,
+  remote_id TEXT NOT NULL,
+  size INTEGER NOT NULL DEFAULT 0,
+  sha256 TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'ok',
+  last_error TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  verified_at INTEGER,
+  PRIMARY KEY (item_id, node_id)
+);
+CREATE INDEX IF NOT EXISTS replicas_node_idx ON replicas (node_id);
 `;
 
 /** Create tables when missing (idempotent, safe on every boot). */

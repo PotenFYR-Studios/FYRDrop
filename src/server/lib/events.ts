@@ -5,7 +5,8 @@
  * break delivery to the others.
  */
 
-export type SyncEvent = { scope: "items" | "certs" | "sessions" | "settings" | "audit"; action: string; id?: string };
+/** `userId` targets one account: only that account's streams receive the event. */
+export type SyncEvent = { scope: "items" | "certs" | "sessions" | "settings" | "audit" | "notifications"; action: string; id?: string; userId?: string };
 export type SignalEvent = { from: string; fromName: string; to: string; kind: "offer" | "answer" | "ice" | "bye"; payload: unknown };
 
 const syncSubs = new Set<(e: SyncEvent) => void>();

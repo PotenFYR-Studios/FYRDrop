@@ -44,7 +44,15 @@ export default function SignIn() {
   const navigate = useNavigate();
 
   const forced = !!user && (mustChangePassword || !user.hasPassword);
-  const [mode, setMode] = useState<"signin" | "register">("signin");
+  const [mode, setMode] = useState<"signin" | "register" | "forgot">("signin");
+  // second factor
+  const [ticket, setTicket] = useState<string | null>(null);
+  const [methods, setMethods] = useState<string[]>([]);
+  const [tfaCode, setTfaCode] = useState("");
+  const [useRecovery, setUseRecovery] = useState(false);
+  // forgot password
+  const [forgotLogin, setForgotLogin] = useState("");
+  const [forgotSent, setForgotSent] = useState<null | { mailEnabled: boolean }>(null);
   const [busy, setBusy] = useState(false);
 
   // sign-in
@@ -78,11 +86,73 @@ export default function SignIn() {
     try {
       const r = await api.accountLogin(username.trim(), password);
       setPassword("");
-      await refresh();
-      push("ok", r.mustChangePassword ? "Signed in - set a new password to continue" : `Welcome back, ${r.user.name}`);
-      if (!r.mustChangePassword) navigate("/", { replace: true });
+      if (r.needs2fa && r.ticket) {
+        setTicket(r.ticket);
+        setMethods(r.methods ?? []);
+        setTfaCode("");
+        setUseRecovery(!(r.methods ?? []).includes("totp") && !(r.methods ?? []).includes("passkey"));
+        return;
+      }
+      await afterLogin(r.user!, !!r.mustChangePassword);
     } catch (e: any) {
       push("err", e?.message ?? "Couldn't sign in");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const afterLogin = async (u: { name: string }, mustChange: boolean) => {
+    setTicket(null);
+    await refresh();
+    push("ok", mustChange ? "Signed in - set a new password to continue" : `Welcome back, ${u.name}`);
+    if (!mustChange) navigate("/", { replace: true });
+  };
+
+  const secondFactorFailed = (e: any) => {
+    if (e?.data?.restart) {
+      setTicket(null);
+      push("err", e?.message ?? "Sign in again");
+    } else push("err", e?.message ?? "That did not work");
+  };
+
+  const verifyCode = async () => {
+    if (busy || !ticket || !tfaCode.trim()) return;
+    setBusy(true);
+    try {
+      const r = await api.verifySecondFactor(useRecovery ? { ticket, recoveryCode: tfaCode.trim() } : { ticket, code: tfaCode.trim() });
+      await afterLogin(r.user, r.mustChangePassword);
+    } catch (e: any) {
+      setTfaCode("");
+      secondFactorFailed(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const verifyPasskey = async () => {
+    if (busy || !ticket) return;
+    setBusy(true);
+    try {
+      const { startAuthentication } = await import("@simplewebauthn/browser");
+      const optionsJSON = await api.passkeyLoginOptions(ticket);
+      const passkey = await startAuthentication({ optionsJSON });
+      const r = await api.verifySecondFactor({ ticket, passkey });
+      await afterLogin(r.user, r.mustChangePassword);
+    } catch (e: any) {
+      if (e?.name === "NotAllowedError") push("info", "Passkey cancelled");
+      else secondFactorFailed(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendReset = async () => {
+    if (busy || !forgotLogin.trim()) return;
+    setBusy(true);
+    try {
+      setForgotSent(await api.forgotPassword(forgotLogin.trim()));
+    } catch (e: any) {
+      push("err", e?.message ?? "Could not send the link");
     } finally {
       setBusy(false);
     }
@@ -140,10 +210,14 @@ export default function SignIn() {
     }
   };
 
-  const heading = forced ? "Choose a new password" : mode === "signin" ? "Sign in" : "Create your account";
+  const heading = forced ? "Choose a new password" : ticket ? "Two-step sign-in" : mode === "forgot" ? "Reset your password" : mode === "signin" ? "Sign in" : "Create your account";
   const sub = forced
     ? "This account still uses a temporary password. Pick one only you know."
-    : user
+    : ticket
+      ? "Your password is right. Confirm it is you with your second factor."
+      : mode === "forgot"
+        ? "We email a reset link to the address confirmed on your account."
+        : user
       ? `Signed in on this device as ${user.name}.`
       : mode === "signin"
         ? "Use your account - or the owner's admin account."
@@ -177,7 +251,65 @@ export default function SignIn() {
           <MagicCard className="p-6 shadow-2xl backdrop-blur">
             <BorderBeam duration={10} />
             <div className="relative space-y-4">
-              {forced ? (
+              {!forced && ticket ? (
+                <>
+                  {methods.includes("passkey") && (
+                    <ShimmerButton onClick={() => void verifyPasskey()} disabled={busy}>
+                      {busy ? <Spinner size={16} /> : <Icon name="fingerprint" size={16} />} Use a passkey
+                    </ShimmerButton>
+                  )}
+                  {(methods.includes("totp") || useRecovery) && (
+                    <div>
+                      <Label>{useRecovery ? "Recovery code" : "Code from your authenticator app"}</Label>
+                      <Input
+                        autoFocus={!methods.includes("passkey")}
+                        inputMode={useRecovery ? "text" : "numeric"}
+                        autoComplete="one-time-code"
+                        value={tfaCode}
+                        onChange={(e) => setTfaCode(useRecovery ? e.target.value.slice(0, 20) : e.target.value.replace(/\D/g, "").slice(0, 6))}
+                        onKeyDown={(e) => e.key === "Enter" && void verifyCode()}
+                        placeholder={useRecovery ? "xxxxx-xxxxx" : "123456"}
+                      />
+                    </div>
+                  )}
+                  {(methods.includes("totp") || useRecovery) && (
+                    <Btn className="w-full" onClick={() => void verifyCode()} disabled={busy || !tfaCode.trim()}>
+                      {busy ? <Spinner size={14} /> : <Icon name="check" size={14} />} Verify
+                    </Btn>
+                  )}
+                  <div className="flex items-center justify-between text-xs">
+                    {methods.includes("recovery") ? (
+                      <button onClick={() => { setUseRecovery((v) => !v); setTfaCode(""); }} className="text-slate-400 transition hover:text-slate-200">
+                        {useRecovery ? (methods.includes("totp") ? "Use the authenticator app" : "Back") : "Use a recovery code"}
+                      </button>
+                    ) : <span />}
+                    <button onClick={() => setTicket(null)} className="text-slate-400 transition hover:text-slate-200">Cancel</button>
+                  </div>
+                </>
+              ) : !forced && mode === "forgot" ? (
+                <>
+                  {forgotSent ? (
+                    <p className="text-sm text-slate-300">
+                      {forgotSent.mailEnabled
+                        ? "If that account has a confirmed email address, a reset link is on its way. It works once and expires in 30 minutes."
+                        : "Email is not set up on this instance, so links cannot be sent. Ask the owner to reset your password from the Users page."}
+                    </p>
+                  ) : (
+                    <>
+                      <div>
+                        <Label>Username or email</Label>
+                        <Input autoFocus value={forgotLogin} onChange={(e) => setForgotLogin(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void sendReset()} />
+                      </div>
+                      <ShimmerButton onClick={() => void sendReset()} disabled={busy || !forgotLogin.trim()}>
+                        {busy ? <Spinner size={16} /> : <Icon name="mail" size={16} />} Send reset link
+                      </ShimmerButton>
+                    </>
+                  )}
+                  <button onClick={() => { setMode("signin"); setForgotSent(null); }} className="w-full text-center text-xs text-slate-400 transition hover:text-slate-200">
+                    Back to sign in
+                  </button>
+                </>
+              ) : forced ? (
                 <>
                   <div>
                     <Label>{user?.hasPassword ? "Current password" : "Temporary password"}</Label>
@@ -248,6 +380,16 @@ export default function SignIn() {
                     {busy ? <Spinner size={16} /> : <Icon name="logout" size={16} />}
                     {busy ? "Signing in…" : "Sign in"}
                   </ShimmerButton>
+                  <button
+                    onClick={() => {
+                      setMode("forgot");
+                      setForgotLogin(username);
+                      setForgotSent(null);
+                    }}
+                    className="w-full text-center text-xs text-slate-500 transition hover:text-slate-300"
+                  >
+                    Forgot your password?
+                  </button>
                   {registrationOpen ? (
                     <button
                       onClick={() => {

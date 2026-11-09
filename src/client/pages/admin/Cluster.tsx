@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, humanSize, timeAgo, type ClusterDiscovered, type ClusterOverview } from "../../api";
 import { Badge, Btn, Card, Empty, Input, Label, PageHeader, Spinner, StatCard, useToast } from "../../ui";
 import { Icon } from "../../icons";
+import ReplicationCard from "../../components/ReplicationCard";
 
 export default function Cluster() {
   const { push } = useToast();
@@ -289,6 +290,8 @@ export default function Cluster() {
           </div>
         )}
       </Card>
+
+      <ReplicationCard nodeCount={nodes.filter((n) => !n.needsRepair).length} />
 
       <p className="mt-4 text-[11px] leading-relaxed text-slate-500">
         Unlinking asks the peer to hand back everything it stored for you, deletes those copies, then destroys the link key on both

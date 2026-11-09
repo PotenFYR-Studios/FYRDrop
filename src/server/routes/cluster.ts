@@ -29,6 +29,8 @@ import { isHttpUrl, ITEM_TYPES } from "../lib/content";
 import { rateLimit } from "../lib/security";
 import { auditRequest, type LogInput } from "../lib/audit";
 import type { AppEnv } from "../lib/net";
+import { checkReplicas, deleteReplicas, getReplica, replicationSummary, runRebalance, setPolicy, storeReplica } from "../lib/replication";
+import { replicas } from "../db/schema";
 
 /* =========================================================================
  * Owner (admin) API - session authenticated, mounted at /api/cluster
@@ -586,6 +588,7 @@ clusterRoutes.delete("/:id", async (c) => {
     return c.json({ error: `Reclaim failed: ${warning}. Retry with force=1 to unlink anyway.`, canForce: true }, 502);
   }
   db.delete(clusterNodes).where(eq(clusterNodes.id, node.id)).run();
+  db.delete(replicas).where(eq(replicas.nodeId, node.id)).run();
   kvDel(`cluster:in:${node.id}`);
   kvDel(`cluster:out:${node.id}`);
   kvDel(`cluster:b:${node.id}`);
@@ -1020,6 +1023,50 @@ clusterNodeRoutes.post("/reclaim", requireLinked, async (c) => {
   db.delete(clusterNodes).where(eq(clusterNodes.id, node.id)).run();
   if (rows.length) publish({ scope: "items", action: "cluster-reclaimed" });
   return c.json(seal(key, { ok: true, count: out.length, items: out }));
+});
+
+/* ------------------------------ Replicas (peer side) ----------------------- */
+
+clusterNodeRoutes.post("/replica/put", requireLinked, async (c) => {
+  const { key, node, payload } = c.get("clusterAuth") as any;
+  const r = await storeReplica(node.id, payload);
+  if ("error" in r) return c.json(seal(key, { error: r.error }), r.status as any);
+  return c.json(seal(key, { ok: true, id: r.id }), 201);
+});
+
+clusterNodeRoutes.post("/replica/check", requireLinked, async (c) => {
+  const { key, node, payload } = c.get("clusterAuth") as any;
+  return c.json(seal(key, { replicas: checkReplicas(node.id, payload?.ids) }));
+});
+
+clusterNodeRoutes.post("/replica/get", requireLinked, async (c) => {
+  const { key, node, payload } = c.get("clusterAuth") as any;
+  const r = getReplica(node.id, payload?.id);
+  if (!r) return c.json(seal(key, { error: "No such replica." }), 404);
+  return c.json(seal(key, r));
+});
+
+clusterNodeRoutes.post("/replica/delete", requireLinked, async (c) => {
+  const { key, node, payload } = c.get("clusterAuth") as any;
+  return c.json(seal(key, { ok: true, deleted: deleteReplicas(node.id, payload?.ids) }));
+});
+
+/* ------------------------------ Replicas (owner) -------------------------- */
+
+clusterRoutes.get("/replication", (c) => c.json(replicationSummary()));
+
+clusterRoutes.post("/replication/policy", async (c) => {
+  const body = (await c.req.json<any>().catch(() => null)) ?? {};
+  const policy = setPolicy(body);
+  audit(c, "cluster.replica-policy", true, policy.enabled ? `Replica policy: ${policy.copies} cop${policy.copies === 1 ? "y" : "ies"} of ${policy.include === "all" ? "every item" : `items labelled "${policy.label}"`}` : "Replica policy turned off", { target: "replica policy", meta: { ...policy } });
+  publish({ scope: "settings", action: "replication" });
+  return c.json({ ok: true, policy });
+});
+
+clusterRoutes.post("/replication/run", async (c) => {
+  const report = await runRebalance("manual");
+  audit(c, "cluster.rebalance-run", report.failed === 0, `Replication pass run by hand: ${report.placed} placed, ${report.removed} removed, ${report.moved} moved`, { target: "cluster", meta: { placed: report.placed, removed: report.removed, moved: report.moved, failed: report.failed } });
+  return c.json({ ok: true, ...replicationSummary(), report });
 });
 
 /** Middleware: authenticate a paired node and keep its key on the context. */

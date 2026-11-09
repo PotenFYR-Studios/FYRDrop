@@ -64,6 +64,8 @@ export const items = sqliteTable("items", {
   userId: text("user_id"),
   /** Cluster node that pushed this item (for reclaim on unlink). */
   clusterOrigin: text("cluster_origin"),
+  /** Set on copies kept for another node: the item id on that node. Hidden from lists. */
+  replicaOf: text("replica_of"),
   /** "everyone" | "selected" | "private" - who can see this item. */
   /** Home group (organisation), not an access rule by itself. */
   groupId: text("group_id").notNull().default(""),
@@ -107,6 +109,22 @@ export const shareLinks = sqliteTable("share_links", {
   note: text("note"),
   /** Comma-separated user ids allowed to open it; empty = anyone with the link. */
   allowedUsers: text("allowed_users").notNull().default(""),
+  /** Account that created the link (null on links made before this column existed). */
+  createdById: text("created_by_id"),
+});
+
+/** One row per open / unlock / download of a share link (no IP stored; see share-stats.ts). */
+export const shareEvents = sqliteTable("share_events", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  token: text("token").notNull(),
+  itemId: text("item_id").notNull(),
+  /** view | unlock | pin_failed | download | blocked */
+  kind: text("kind").notNull(),
+  ts: integer("ts").notNull(),
+  /** Daily-salted hash of IP + user agent; cannot be linked across days. */
+  visitor: text("visitor").notNull().default(""),
+  device: text("device").notNull().default(""),
+  referrer: text("referrer").notNull().default(""),
 });
 
 /** Self-signed / uploaded TLS certificates offered to other devices. */
@@ -145,6 +163,14 @@ export const users = sqliteTable("users", {
   /** "owner" (hosting machine) | "user" - first profile created on this instance owns it. */
   role: text("role").notNull().default("user"),
   isBlocked: integer("is_blocked").notNull().default(0),
+  /** Contact address for password reset and notifications. */
+  email: text("email"),
+  emailVerified: integer("email_verified").notNull().default(0),
+  /** TOTP secret (base32), sealed with the master key. */
+  totpSecret: text("totp_secret"),
+  totpEnabled: integer("totp_enabled").notNull().default(0),
+  /** Comma separated SHA-256 hashes of unused recovery codes. */
+  recoveryCodes: text("recovery_codes").notNull().default(""),
   createdAt: integer("created_at").notNull(),
   lastSeenAt: integer("last_seen_at").notNull(),
 });
@@ -272,3 +298,121 @@ export const clusterUsers = sqliteTable("cluster_users", {
   color: text("color").notNull().default("#6366f1"),
   updatedAt: integer("updated_at").notNull(),
 });
+
+
+/** Chunked uploads in progress. Parts live in DATA_DIR/uploads_tmp; rows survive restarts so uploads can resume. */
+export const uploads = sqliteTable("uploads", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  name: text("name").notNull(),
+  mime: text("mime").notNull().default("application/octet-stream"),
+  size: integer("size").notNull(),
+  chunkSize: integer("chunk_size").notNull(),
+  /** Client file fingerprint (name|size|lastModified) used to resume after a reload. */
+  fingerprint: text("fingerprint").notNull().default(""),
+  /** JSON: access, groupId, category, labels. */
+  meta: text("meta").notNull().default("{}"),
+  createdAt: integer("created_at").notNull(),
+  lastActivity: integer("last_activity").notNull(),
+});
+
+/** Passkeys / security keys registered as a second factor. */
+export const webauthnCredentials = sqliteTable("webauthn_credentials", {
+  /** Credential id (base64url). */
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  /** Relying-party id (host name) the credential is bound to. */
+  rpId: text("rp_id").notNull(),
+  /** COSE public key, base64url. */
+  publicKey: text("public_key").notNull(),
+  counter: integer("counter").notNull().default(0),
+  transports: text("transports").notNull().default(""),
+  name: text("name").notNull().default("Passkey"),
+  createdAt: integer("created_at").notNull(),
+  lastUsedAt: integer("last_used_at"),
+});
+
+/** Single-use password reset links (only the SHA-256 of the token is stored). */
+export const passwordResets = sqliteTable("password_resets", {
+  tokenHash: text("token_hash").primaryKey(),
+  userId: text("user_id").notNull(),
+  createdAt: integer("created_at").notNull(),
+  expiresAt: integer("expires_at").notNull(),
+  usedAt: integer("used_at"),
+});
+
+/** Per-account inbox (bell menu). */
+export const notifications = sqliteTable("notifications", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: text("user_id").notNull(),
+  kind: text("kind").notNull(),
+  title: text("title").notNull(),
+  body: text("body").notNull().default(""),
+  link: text("link").notNull().default(""),
+  createdAt: integer("created_at").notNull(),
+  readAt: integer("read_at"),
+});
+
+/** Personal API keys (only a SHA-256 of the secret is stored). */
+export const apiKeys = sqliteTable("api_keys", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  name: text("name").notNull(),
+  secretHash: text("secret_hash").notNull(),
+  /** Comma separated: read, write. */
+  scopes: text("scopes").notNull().default("read"),
+  createdAt: integer("created_at").notNull(),
+  lastUsedAt: integer("last_used_at"),
+  expiresAt: integer("expires_at"),
+  revokedAt: integer("revoked_at"),
+});
+
+/** Outgoing webhooks: signed JSON POSTs when an account's items change. */
+export const webhooks = sqliteTable("webhooks", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  name: text("name").notNull(),
+  url: text("url").notNull(),
+  /** HMAC signing secret, sealed with the master key. */
+  secretEnc: text("secret_enc").notNull(),
+  /** Comma separated event names; empty = all. */
+  events: text("events").notNull().default(""),
+  enabled: integer("enabled").notNull().default(1),
+  /** Consecutive failed deliveries; the hook turns itself off at 20. */
+  failures: integer("failures").notNull().default(0),
+  lastStatus: text("last_status").notNull().default("never"),
+  lastDeliveryAt: integer("last_delivery_at"),
+  createdAt: integer("created_at").notNull(),
+});
+
+export const webhookDeliveries = sqliteTable("webhook_deliveries", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  webhookId: text("webhook_id").notNull(),
+  deliveryId: text("delivery_id").notNull(),
+  event: text("event").notNull(),
+  ok: integer("ok").notNull().default(0),
+  statusCode: integer("status_code"),
+  error: text("error").notNull().default(""),
+  attempt: integer("attempt").notNull().default(1),
+  durationMs: integer("duration_ms").notNull().default(0),
+  createdAt: integer("created_at").notNull(),
+});
+
+/** Copies of local items kept on linked nodes (origin side bookkeeping). */
+export const replicas = sqliteTable(
+  "replicas",
+  {
+    itemId: text("item_id").notNull(),
+    nodeId: text("node_id").notNull(),
+    /** The copy's item id on that node. */
+    remoteId: text("remote_id").notNull(),
+    size: integer("size").notNull().default(0),
+    /** SHA-256 of the plaintext, checked against the peer during verification. */
+    sha256: text("sha256").notNull(),
+    status: text("status").notNull().default("ok"),
+    lastError: text("last_error").notNull().default(""),
+    createdAt: integer("created_at").notNull(),
+    verifiedAt: integer("verified_at"),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.itemId, t.nodeId] }) }),
+);

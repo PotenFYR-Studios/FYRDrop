@@ -18,12 +18,22 @@ import { groupRoutes } from "./routes/groups";
 import { remoteRoutes } from "./routes/remote";
 import { clusterRoutes, clusterNodeRoutes } from "./routes/cluster";
 import { publicClusterRoutes } from "./routes/overview";
+import { backupRoutes } from "./routes/backup";
+import { accountRoutes, sweepAccount } from "./routes/account";
+import { mailRoutes } from "./routes/mail";
+import { notificationRoutes } from "./routes/notifications";
+import { keyRoutes, webhookRoutes } from "./routes/developer";
+import { sweepNotifications } from "./lib/notify";
+import { sweepQuotaAlerts } from "./lib/alerts";
+import { sweepShareEvents } from "./lib/share-stats";
+import { sweepReplication } from "./lib/replication";
+import { sweepBackups } from "./lib/backup";
 import { startDiscovery, stopDiscovery } from "./lib/discovery";
 import { securityHeaders, csrfOriginCheck, ipWhitelist } from "./lib/security";
 import { generateSelfSigned } from "./lib/certs";
 import { startMaintenance, registerSweep, repairLegacyChunkedFiles } from "./lib/maintenance";
 import { backfillAuditV2 } from "./lib/audit";
-import { finalizeOnBoot } from "./lib/update";
+import { finalizeOnBoot, currentVersion } from "./lib/update";
 import type { AppEnv } from "./lib/net";
 
 migrate();
@@ -90,6 +100,12 @@ app.route("/api/webrtc", webrtcRoutes);
 app.route("/api/cluster-node", clusterNodeRoutes);
 app.route("/api/overview", publicClusterRoutes);
 app.route("/api/cluster", clusterRoutes);
+app.route("/api/backups", backupRoutes);
+app.route("/api/account", accountRoutes);
+app.route("/api/mail", mailRoutes);
+app.route("/api/notifications", notificationRoutes);
+app.route("/api/keys", keyRoutes);
+app.route("/api/webhooks", webhookRoutes);
 
 app.onError((err, c) => {
   // Never leak stack traces / internals to clients (OWASP A05).
@@ -149,6 +165,12 @@ const server = Bun.serve({
 
 registerSweep(sweepUploads);
 registerSweep(sweepPresence);
+registerSweep(() => sweepBackups(currentVersion()));
+registerSweep(sweepAccount);
+registerSweep(sweepNotifications);
+registerSweep(sweepQuotaAlerts);
+registerSweep(sweepShareEvents);
+registerSweep(sweepReplication);
 startMaintenance();
 startDiscovery(port);
 void repairLegacyChunkedFiles();

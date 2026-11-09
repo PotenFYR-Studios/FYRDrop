@@ -3,6 +3,7 @@ import { api, timeAgo } from "../../api";
 import { Icon } from "../../icons";
 import { Badge, Btn, Card, Empty, Input, Label, Modal, PageHeader, Spinner, useToast, useSync } from "../../ui";
 import type { UpdateCheck, UpdateStatus } from "../../api";
+import MailSettings from "../../components/MailSettings";
 
 function statusTone(status: string): "ok" | "bad" | "default" {
   if (status === "ok") return "ok";
@@ -167,6 +168,7 @@ export default function AdminSettings() {
       </div>
 
       <RestartCard />
+      <MailSettings />
       <UpdateCard />
     </div>
   );

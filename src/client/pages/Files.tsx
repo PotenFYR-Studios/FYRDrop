@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api, humanSize, isHttpUrl, runLimited, uploadFile, type GroupSummary, type Item, type RemoteItem } from "../api";
+import { api, fileFingerprint, humanSize, isHttpUrl, PAUSE, runLimited, timeAgo, uploadFile, type GroupSummary, type Item, type PendingUpload, type RemoteItem } from "../api";
 import { Badge, Btn, Card, Empty, ItemMeta, Label, Modal, PageHeader, Progress, Spinner, useSync, useToast } from "../ui";
 import { Icon, mimeIcon } from "../icons";
 import ShareWizard from "./ShareWizard";
-import { AccessChips, AccessDialog, PreviewModal, UploadAccessDialog, type AccessState, toPayload } from "../components/Access";
+import { AccessChips, AccessDialog, PreviewModal, UploadAccessDialog, type AccessState, defaultAccess, toPayload } from "../components/Access";
 
 type UploadJob = { id: string; name: string; pct: number };
 type Tab = "all" | "file" | "image";
@@ -38,16 +38,28 @@ export default function Files() {
   const inputRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
   const jobsRef = useRef(new Map<string, AbortController>());
+  const [unfinished, setUnfinished] = useState<PendingUpload[]>([]);
+  const resumeRef = useRef<HTMLInputElement>(null);
+  const [resumeTarget, setResumeTarget] = useState<PendingUpload | null>(null);
+  const activeFingerprints = useRef(new Set<string>());
 
-  // Leaving the page cancels anything still in flight instead of letting it
-  // complete invisibly.
+  // Leaving the page pauses anything still in flight; the server keeps the parts
+  // and the upload shows up under "Unfinished uploads" next time.
   useEffect(
     () => () => {
-      for (const c of jobsRef.current.values()) c.abort();
+      for (const c of jobsRef.current.values()) c.abort(PAUSE);
       jobsRef.current.clear();
     },
     [],
   );
+
+  const reloadUnfinished = useCallback(() => {
+    api
+      .pendingUploads()
+      .then((r) => setUnfinished(r.uploads.filter((u) => !activeFingerprints.current.has(u.fingerprint))))
+      .catch(() => {});
+  }, []);
+  useEffect(() => reloadUnfinished(), [reloadUnfinished]);
 
   const reload = useCallback(async () => {
     try {
@@ -99,15 +111,18 @@ export default function Files() {
       .catch(() => {});
   }, []);
 
-  const runUpload = async (files: File[], access: AccessState) => {
+  const runUpload = async (files: File[], access: AccessState | null, resumeId?: string) => {
     if (files.length === 0) return;
-    const payload = toPayload(access);
+    const payload = toPayload(access ?? defaultAccess());
     let failed = 0;
     // Two at a time keeps memory and the uplink sane on phones / small servers.
     await runLimited(files, 2, async (file) => {
       const job: UploadJob = { id: `${file.name}-${file.size}-${Math.random()}`, name: file.name, pct: 0 };
       const controller = new AbortController();
+      const fp = fileFingerprint(file);
       jobsRef.current.set(job.id, controller);
+      activeFingerprints.current.add(fp);
+      setUnfinished((u) => u.filter((x) => x.fingerprint !== fp && x.uploadId !== resumeId));
       setJobs((j) => [...j, job]);
       try {
         await uploadFile(file, {
@@ -117,20 +132,54 @@ export default function Files() {
           category: category.trim() || undefined,
           labels: labels.trim() || undefined,
           signal: controller.signal,
+          resumeId,
+          onResumed: (pct) => push("info", `${file.name}: resuming at ${pct}%`),
           onProgress: (pct) => setJobs((j) => j.map((x) => (x.id === job.id ? { ...x, pct } : x))),
         });
       } catch (e: any) {
         failed++;
-        if (e?.name === "AbortError") push("info", `${file.name}: cancelled`);
-        else push("err", `${file.name}: ${e.message ?? "upload failed"}`);
+        if (e?.name === "AbortError") {
+          if (controller.signal.reason === PAUSE) push("info", `${file.name}: paused - resume it any time`);
+          else push("info", `${file.name}: cancelled`);
+        } else push("err", `${file.name}: ${e.message ?? "upload failed"}`);
       } finally {
         jobsRef.current.delete(job.id);
+        activeFingerprints.current.delete(fp);
         setJobs((j) => j.filter((x) => x.id !== job.id));
       }
     });
     if (failed === 0) push("ok", files.length === 1 ? "Upload complete" : `${files.length} files uploaded`);
     else if (failed < files.length) push("info", "Upload finished with errors");
     void reload();
+    reloadUnfinished();
+  };
+
+  const pickResume = (u: PendingUpload) => {
+    setResumeTarget(u);
+    resumeRef.current?.click();
+  };
+
+  const onResumePicked = (file: File | undefined) => {
+    const target = resumeTarget;
+    setResumeTarget(null);
+    if (!file || !target) return;
+    if (file.size !== target.size) {
+      push("err", `That file is ${humanSize(file.size)}, the unfinished upload is ${humanSize(target.size)}. Pick the original file.`);
+      return;
+    }
+    // Renamed copies are fine as long as the size matches; the server keeps the original name.
+    const same = new File([file], target.name, { type: file.type || target.mime, lastModified: file.lastModified });
+    void runUpload([same], null, target.uploadId);
+  };
+
+  const discardUnfinished = async (u: PendingUpload) => {
+    if (!window.confirm(`Discard the unfinished upload of "${u.name}"? The ${humanSize(u.receivedBytes)} already sent will be deleted.`)) return;
+    try {
+      await api.abortChunked(u.uploadId);
+      setUnfinished((list) => list.filter((x) => x.uploadId !== u.uploadId));
+    } catch (e: any) {
+      push("err", e?.message ?? "Could not discard that upload");
+    }
   };
 
   const replicate = async (it: Item) => {
@@ -207,6 +256,10 @@ export default function Files() {
 
   const cancelUpload = (jobId: string) => {
     jobsRef.current.get(jobId)?.abort();
+  };
+
+  const pauseUpload = (jobId: string) => {
+    jobsRef.current.get(jobId)?.abort(PAUSE);
   };
 
   const onDrop = (e: DragEvent) => {
@@ -314,7 +367,7 @@ export default function Files() {
                   setPending(
                     picked.map((f) => {
                       const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
-                      return new File([f], rel.replace(/\//g, "__"), { type: f.type || "application/octet-stream" });
+                      return new File([f], rel.replace(/\//g, "__"), { type: f.type || "application/octet-stream", lastModified: f.lastModified });
                     }),
                   );
                 }
@@ -378,6 +431,14 @@ export default function Files() {
                 </span>
                 <span className="text-slate-500">{job.pct}%</span>
                 <button
+                  onClick={() => pauseUpload(job.id)}
+                  className="rounded px-1 text-[11px] text-slate-500 transition hover:bg-white/5 hover:text-slate-200"
+                  aria-label={`Pause ${job.name}`}
+                  title="Pause - the parts already sent are kept"
+                >
+                  Pause
+                </button>
+                <button
                   onClick={() => cancelUpload(job.id)}
                   className="rounded p-0.5 text-slate-500 transition hover:bg-white/5 hover:text-red-300"
                   aria-label={`Cancel ${job.name}`}
@@ -389,6 +450,47 @@ export default function Files() {
               <Progress pct={job.pct} />
             </div>
           ))}
+        </Card>
+      )}
+
+      <input
+        ref={resumeRef}
+        type="file"
+        className="hidden"
+        onChange={(e) => {
+          onResumePicked(e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
+      {unfinished.length > 0 && (
+        <Card className="mb-6 p-4">
+          <div className="mb-3 flex items-center gap-2 text-sm font-medium text-white">
+            <Icon name="history" size={15} className="text-amber-300" />
+            Unfinished uploads
+            <span className="text-xs font-normal text-slate-500">pick the same file again to continue where it stopped</span>
+          </div>
+          <div className="space-y-3">
+            {unfinished.map((u) => {
+              const pct = Math.round((u.receivedBytes / u.size) * 100);
+              return (
+                <div key={u.uploadId}>
+                  <div className="mb-1 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="min-w-0 flex-1 truncate text-slate-200" title={u.name}>{u.name}</span>
+                    <span className="text-slate-500">
+                      {humanSize(u.receivedBytes)} of {humanSize(u.size)} · {timeAgo(u.lastActivity)}
+                    </span>
+                    <Btn size="sm" variant="soft" onClick={() => pickResume(u)} disabled={u.finishing}>
+                      Resume
+                    </Btn>
+                    <Btn size="sm" variant="ghost" onClick={() => void discardUnfinished(u)} disabled={u.finishing}>
+                      Discard
+                    </Btn>
+                  </div>
+                  <Progress pct={pct} />
+                </div>
+              );
+            })}
+          </div>
         </Card>
       )}
 

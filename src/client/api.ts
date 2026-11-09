@@ -45,6 +45,10 @@ export interface UserProfile {
   isBlocked: number;
   mustChangePassword: number;
   hasPassword: boolean;
+  email?: string | null;
+  emailVerified?: number;
+  totpEnabled?: number;
+  recoveryCodesLeft?: number;
   createdAt: number;
   lastSeenAt: number;
 }
@@ -171,6 +175,22 @@ export interface ShareLink {
   note: string | null;
   hasPin: boolean;
   active: boolean;
+}
+
+export interface MyShareLink extends ShareLink {
+  allowedUsers: string;
+  item: { id: string; name: string; type: string; mime: string; size: number };
+  views: number;
+  lastAccessAt: number | null;
+}
+export interface ShareStats {
+  totals: { views: number; downloads: number; uniqueVisitors: number; pinFailures: number; unlocks: number; blocked: number };
+  daily: { date: string; views: number; downloads: number }[];
+  devices: { label: string; count: number }[];
+  referrers: { label: string; count: number }[];
+  recent: { ts: number; kind: string; device: string; referrer: string }[];
+  firstAt: number | null;
+  lastAt: number | null;
 }
 
 export interface Status {
@@ -407,7 +427,48 @@ export const api = {
 
   // stage 2: accounts
   accountLogin: (username: string, password: string) =>
-    req<{ ok: boolean; user: UserProfile; mustChangePassword: boolean }>("/api/auth/account/login", post({ username, password })),
+    req<{ ok: boolean; user?: UserProfile; mustChangePassword?: boolean; needs2fa?: boolean; ticket?: string; methods?: string[] }>("/api/auth/account/login", post({ username, password })),
+  verifySecondFactor: (p: { ticket: string; code?: string; recoveryCode?: string; passkey?: unknown }) =>
+    req<{ ok: boolean; user: UserProfile; mustChangePassword: boolean }>("/api/account/login/verify", post(p)),
+  passkeyLoginOptions: (ticket: string) => req<any>("/api/account/login/passkey-options", post({ ticket })),
+  forgotPassword: (login: string) => req<{ ok: boolean; mailEnabled: boolean }>("/api/account/password/forgot", post({ login })),
+  resetPasswordWithToken: (token: string, newPassword: string) => req<{ ok: boolean; username: string }>("/api/account/password/reset", post({ token, newPassword })),
+  accountSecurity: () => req<AccountSecurity>("/api/account/security"),
+  totpSetup: (password: string) => req<{ secret: string; uri: string; qr: string }>("/api/account/totp/setup", post({ password })),
+  totpEnable: (code: string) => req<{ ok: boolean; recoveryCodes: string[] }>("/api/account/totp/enable", post({ code })),
+  totpDisable: (password: string) => req("/api/account/totp/disable", post({ password })),
+  regenerateRecovery: (password: string) => req<{ ok: boolean; recoveryCodes: string[] }>("/api/account/recovery/regenerate", post({ password })),
+  passkeyOptions: (password: string, name: string) => req<any>("/api/account/passkeys/options", post({ password, name })),
+  passkeyRegister: (response: unknown) => req<{ ok: boolean; recoveryCodes?: string[] }>("/api/account/passkeys/register", post({ response })),
+  passkeyDelete: (id: string, password: string) => req(`/api/account/passkeys/${encodeURIComponent(id)}/delete`, post({ password })),
+  setEmail: (email: string, password: string) => req<{ ok: boolean; sentTo: string }>("/api/account/email", post({ email, password })),
+  verifyEmail: (code: string) => req<{ ok: boolean; email: string }>("/api/account/email/verify", post({ code })),
+  removeEmail: (password: string) => req("/api/account/email/remove", post({ password })),
+  notifications: () => req<{ items: AppNotification[]; unread: number }>("/api/notifications"),
+  markNotificationsRead: (ids: number[] | "all") => req("/api/notifications/read", post(ids === "all" ? { all: true } : { ids })),
+  clearReadNotifications: () => req("/api/notifications/read", { method: "DELETE" }),
+  notificationPrefs: () =>
+    req<{ prefs: { inapp: Record<string, boolean>; email: Record<string, boolean> }; kinds: { key: string; label: string; group: string }[]; emailReady: boolean }>("/api/notifications/prefs"),
+  saveNotificationPrefs: (p: { inapp?: Record<string, boolean>; email?: Record<string, boolean> }) =>
+    req<{ ok: boolean; prefs: { inapp: Record<string, boolean>; email: Record<string, boolean> } }>("/api/notifications/prefs", post(p)),
+  apiKeys: () => req<{ keys: ApiKeyView[]; scopes: string[] }>("/api/keys"),
+  createApiKey: (name: string, scopes: string[], expiresDays: number) => req<{ key: ApiKeyView; token: string }>("/api/keys", post({ name, scopes, expiresDays })),
+  revokeApiKey: (id: string) => req(`/api/keys/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  webhooks: () => req<{ webhooks: WebhookView[]; events: string[]; canTargetPrivate: boolean }>("/api/webhooks"),
+  createWebhook: (p: { name: string; url: string; events: string[] }) => req<{ webhook: WebhookView; secret: string }>("/api/webhooks", post(p)),
+  updateWebhook: (id: string, p: Partial<{ name: string; url: string; events: string[]; enabled: boolean }>) => req<{ webhook: WebhookView }>(`/api/webhooks/${id}`, patch(p)),
+  rotateWebhookSecret: (id: string) => req<{ ok: boolean; secret: string }>(`/api/webhooks/${id}/rotate-secret`, post()),
+  testWebhook: (id: string) => req<{ ok: boolean; statusCode: number | null; error: string }>(`/api/webhooks/${id}/test`, post()),
+  webhookDeliveries: (id: string) =>
+    req<{ deliveries: { id: number; event: string; ok: number; statusCode: number | null; error: string; attempt: number; durationMs: number; createdAt: number }[] }>(`/api/webhooks/${id}/deliveries`),
+  deleteWebhook: (id: string) => req(`/api/webhooks/${id}`, { method: "DELETE" }),
+  replication: () => req<ReplicationState>("/api/cluster/replication"),
+  saveReplicaPolicy: (p: Partial<ReplicaPolicy>) => req<{ ok: boolean; policy: ReplicaPolicy }>("/api/cluster/replication/policy", post(p)),
+  runReplication: () => req<ReplicationState & { report: ReplicationReport }>("/api/cluster/replication/run", post()),
+  adminReset2fa: (userId: string) => req(`/api/account/admin/${encodeURIComponent(userId)}/reset-2fa`, post()),
+  mailConfig: () => req<{ config: MailConfigView }>("/api/mail"),
+  saveMailConfig: (p: Partial<MailConfigView> & { password?: string | null }) => req<{ ok: boolean; config: MailConfigView }>("/api/mail", post(p)),
+  testMail: (to: string) => req<{ ok: boolean; sentTo: string }>("/api/mail/test", post({ to })),
   register: (p: { username: string; name: string; password: string; avatar: string | null; color: string }) =>
     req<{ ok: boolean; user: UserProfile }>("/api/auth/account/register", post(p)),
   switchAccount: () => req("/api/auth/account/logout", post()),
@@ -458,8 +519,15 @@ export const api = {
     req<{ item: Item }>("/api/items/text", post({ title, content, expiresDays, access })),
   shareUrl: (title: string, url: string, expiresDays: number, access: AccessPayload) =>
     req<{ item: Item }>("/api/items/url", post({ title, url, expiresDays, access })),
-  beginChunked: (name: string, size: number, mime: string, chunkSize: number, access: AccessPayload, meta?: { groupId?: string; category?: string; labels?: string }) =>
-    req<{ uploadId: string; chunkSize: number; chunkCount: number }>("/api/items/upload/begin", post({ name, size, mime, chunkSize, access, ...meta })),
+  beginChunked: (
+    name: string,
+    size: number,
+    mime: string,
+    chunkSize: number,
+    access: AccessPayload,
+    meta?: { groupId?: string; category?: string; labels?: string; fingerprint?: string; resumeId?: string },
+  ) => req<PendingUpload & { resumed: boolean }>("/api/items/upload/begin", post({ name, size, mime, chunkSize, access, ...meta })),
+  pendingUploads: () => req<{ uploads: PendingUpload[] }>("/api/items/upload/pending"),
   sendChunk: (uploadId: string, index: number, data: Blob, signal?: AbortSignal) =>
     req(`/api/items/upload/chunk/${uploadId}/${index}`, { method: "PUT", body: data, signal }),
   finishChunked: (uploadId: string, expiresDays: number) => req<{ item: Item }>("/api/items/upload/finish", post({ uploadId, expiresDays })),
@@ -474,6 +542,8 @@ export const api = {
   createShare: (id: string, opts: { expiresDays?: number; maxDownloads?: number; pin?: string; note?: string; allowedUserIds?: string[]; alias?: string }) =>
     req<{ token: string; url: string }>(`/api/items/${id}/share`, post(opts)),
   itemShares: (id: string) => req<{ links: ShareLink[] }>(`/api/items/${id}/share`),
+  myShares: () => req<{ links: MyShareLink[] }>("/api/items/shares/mine"),
+  shareStats: (id: string, token: string, days = 30) => req<ShareStats>(`/api/items/${id}/share/${encodeURIComponent(token)}/stats?days=${days}`),
   revokeShare: (id: string, token: string) => req(`/api/items/${id}/share/${token}`, { method: "DELETE" }),
 
   // certs
@@ -539,6 +609,17 @@ export const api = {
   removeGroupMember: (id: string, userId: string) => req(`/api/groups/${id}/members/${userId}`, { method: "DELETE" }),
 
   // updates (owner)
+  // backup & restore (owner)
+  backups: () => req<BackupState>("/api/backups"),
+  createBackup: (p: { includeFiles: boolean; passphrase?: string; note?: string }) =>
+    req<{ ok: boolean; running?: boolean; backup?: BackupInfo }>("/api/backups", post(p)),
+  deleteBackup: (name: string) => req(`/api/backups/file/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  backupSchedule: (p: Partial<Pick<BackupSchedule, "enabled" | "everyHours" | "keep" | "includeFiles">>) =>
+    req<{ ok: boolean; schedule: BackupSchedule }>("/api/backups/schedule", post(p)),
+  inspectBackup: (name: string, passphrase?: string) => req<{ ok: boolean; manifest: BackupManifest }>("/api/backups/inspect", post({ name, passphrase })),
+  restoreBackup: (name: string, passphrase: string | undefined, restart: boolean) =>
+    req<{ ok: boolean; staged: boolean; restarting: boolean; manifest: BackupManifest }>("/api/backups/restore", post({ name, passphrase, confirm: "RESTORE", restart })),
+  cancelRestore: () => req("/api/backups/restore", { method: "DELETE" }),
   adminGroups: () => req<{ groups: { id: string; name: string; description: string; color: string; ownerId: string; owner: { id: string; name: string; username: string | null } | null; isDefault: boolean; itemCount: number; createdAt: number }[] }>("/api/admin/groups"),
   adminDeleteGroup: (id: string) => req(`/api/admin/groups/${id}`, { method: "DELETE" }),
   updateStatus: () => req<UpdateStatus>("/api/admin/update"),
@@ -570,20 +651,194 @@ export const api = {
   signal: (to: string, kind: "offer" | "answer" | "ice" | "bye", payload: unknown) => req("/api/webrtc/signal", post({ to, kind, payload })),
 
   // public share page
-  shareMeta: (token: string) => req<any>(`/api/share/${encodeURIComponent(token)}`),
+  shareMeta: (token: string, ref?: string) => req<any>(`/api/share/${encodeURIComponent(token)}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`),
   unlockShare: (token: string, pin: string) => req<{ ok: boolean; grant: string; preview?: string }>(`/api/share/${encodeURIComponent(token)}/unlock`, post({ pin })),
 };
+
+/** A chunked upload the server is still holding parts for (resumable after a reload or restart). */
+export interface PendingUpload {
+  uploadId: string;
+  name: string;
+  mime: string;
+  size: number;
+  fingerprint: string;
+  chunkSize: number;
+  chunkCount: number;
+  received: number[];
+  receivedBytes: number;
+  createdAt: number;
+  lastActivity: number;
+  finishing: boolean;
+}
+
+/** Identifies "the same file" across page reloads without reading its bytes. */
+export function fileFingerprint(file: File) {
+  const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+  return `${rel}|${file.size}|${file.lastModified}`;
+}
+
+/** Abort reason that stops sending but keeps the server parts, so the upload can resume later. */
+export const PAUSE = "pause";
+
+export interface BackupInfo {
+  name: string;
+  size: number;
+  createdAt: number;
+  encrypted: boolean;
+  includesFiles: boolean;
+  note: string;
+  auto: boolean;
+}
+export interface BackupManifest {
+  format: number;
+  version: string;
+  createdAt: number;
+  appName: string;
+  includesFiles: boolean;
+  encrypted: boolean;
+  counts: { items: number; users: number; files: number; bytes: number };
+  note: string;
+}
+export interface BackupSchedule {
+  enabled: boolean;
+  everyHours: number;
+  keep: number;
+  includeFiles: boolean;
+  lastRunAt: number;
+  lastError: string;
+}
+export interface BackupState {
+  backups: BackupInfo[];
+  running: boolean;
+  lastError: string;
+  schedule: BackupSchedule;
+  staged: { at: number; by: string; from: string; manifest: BackupManifest } | null;
+  lastRestore: { at: number; ok: boolean; from?: string; error?: string; previous?: string } | null;
+}
+
+/** Upload a backup archive from this computer in sequential chunks. */
+export async function uploadBackupFile(file: File, onProgress: (pct: number) => void) {
+  const begun = await req<{ uploadId: string; chunkSize: number }>("/api/backups/upload/begin", post({ name: file.name, size: file.size }));
+  const cs = Math.min(begun.chunkSize, 16 * 1024 * 1024);
+  for (let off = 0, i = 0; off < file.size; off += cs, i++) {
+    await req(`/api/backups/upload/${begun.uploadId}/${i}`, { method: "PUT", body: file.slice(off, off + cs) });
+    onProgress(Math.round(((off + cs) / file.size) * 100));
+  }
+  return req<{ ok: boolean; name: string; encrypted: boolean }>(`/api/backups/upload/${begun.uploadId}/finish`, post());
+}
+
+export interface ApiKeyView {
+  id: string;
+  name: string;
+  scopes: string[];
+  preview: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+  expiresAt: number | null;
+}
+export interface WebhookView {
+  id: string;
+  name: string;
+  url: string;
+  events: string[];
+  enabled: boolean;
+  failures: number;
+  lastStatus: string;
+  lastDeliveryAt: number | null;
+  createdAt: number;
+}
+export interface ReplicaPolicy {
+  enabled: boolean;
+  copies: number;
+  include: "all" | "label";
+  label: string;
+  maxItemMb: number;
+  headroomPct: number;
+  maxMbPerRun: number;
+  verifyEveryHours: number;
+}
+export interface ReplicationReport {
+  at: number;
+  durationMs: number;
+  reason: string;
+  placed: number;
+  removed: number;
+  moved: number;
+  verified: number;
+  replacedBad: number;
+  repaired: number;
+  failed: number;
+  bytesSent: number;
+  budgetHit: boolean;
+  errors: string[];
+  nodes: { id: string; name: string; reachable: boolean; freeBytes: number; capacityBytes: number }[];
+}
+export interface ReplicationState {
+  policy: ReplicaPolicy;
+  running: boolean;
+  report: ReplicationReport | null;
+  summary: { eligible: number; protected: number; under: number; over: number; tooLarge: number; maxCopies: number };
+  nodes: { id: string; name: string; replicas: number; bytes: number; lastSeenAt: number | null; status: string }[];
+}
+export interface AppNotification {
+  id: number;
+  kind: string;
+  title: string;
+  body: string;
+  link: string;
+  createdAt: number;
+  readAt: number | null;
+}
+export interface AccountSecurity {
+  totpEnabled: boolean;
+  recoveryCodesLeft: number;
+  passkeys: { id: string; name: string; rpId: string; createdAt: number; lastUsedAt: number | null }[];
+  passkeysAvailable: boolean;
+  passkeysProblem: string;
+  currentRpId: string;
+  email: string | null;
+  emailVerified: boolean;
+  pendingEmail: string | null;
+  mailEnabled: boolean;
+}
+export interface MailConfigView {
+  enabled: boolean;
+  host: string;
+  port: number;
+  security: "tls" | "starttls" | "none";
+  user: string;
+  from: string;
+  publicUrl: string;
+  hasPassword: boolean;
+  outbox: boolean;
+}
 
 export const MULTIPART_THRESHOLD = 16 * 1024 * 1024;
 const CHUNK = 8 * 1024 * 1024;
 
-/** Upload with automatic chunking for big files. Abortable; aborted chunked uploads are cleaned up server-side. */
+/**
+ * Upload with automatic chunking for big files.
+ * Chunked uploads are resumable: the server keeps received parts, and starting the
+ * same file again (same fingerprint, or an explicit resumeId) skips what is already there.
+ * Aborting with reason PAUSE, a network failure or closing the tab keeps the parts;
+ * a plain abort (the user pressed cancel) discards them.
+ */
 export async function uploadFile(
   file: File,
-  opts: { expiresDays?: number; onProgress?: (pct: number) => void; access: AccessPayload; signal?: AbortSignal; groupId?: string; category?: string; labels?: string },
+  opts: {
+    expiresDays?: number;
+    onProgress?: (pct: number) => void;
+    access: AccessPayload;
+    signal?: AbortSignal;
+    groupId?: string;
+    category?: string;
+    labels?: string;
+    resumeId?: string;
+    onResumed?: (fromPct: number) => void;
+  },
 ) {
   const onProgress = opts.onProgress ?? (() => {});
-  if (file.size <= MULTIPART_THRESHOLD) {
+  if (file.size <= MULTIPART_THRESHOLD && !opts.resumeId) {
     onProgress(15);
     const res = await api.upload([file], opts.expiresDays ?? 0, opts.access, opts.signal, {
       groupId: opts.groupId,
@@ -593,14 +848,23 @@ export async function uploadFile(
     onProgress(100);
     return res.items[0]!;
   }
-  const { uploadId, chunkCount, chunkSize } = await api.beginChunked(file.name, file.size, file.type || "application/octet-stream", CHUNK, opts.access, {
+  const begun = await api.beginChunked(file.name, file.size, file.type || "application/octet-stream", CHUNK, opts.access, {
     groupId: opts.groupId,
     category: opts.category,
     labels: opts.labels,
+    fingerprint: fileFingerprint(file),
+    resumeId: opts.resumeId,
   });
+  const { uploadId, chunkCount, chunkSize } = begun;
+  const have = new Set(begun.received);
+  let done = have.size;
+  const pct = () => Math.round((done / chunkCount) * 96);
+  if (begun.resumed && done > 0) opts.onResumed?.(pct());
+  onProgress(pct());
   try {
     for (let i = 0; i < chunkCount; i++) {
       if (opts.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+      if (have.has(i)) continue;
       const blob = file.slice(i * chunkSize, Math.min((i + 1) * chunkSize, file.size));
       // Retry transient failures (flaky Wi-Fi) without restarting the whole file.
       for (let attempt = 0; ; attempt++) {
@@ -608,17 +872,22 @@ export async function uploadFile(
           await api.sendChunk(uploadId, i, blob, opts.signal);
           break;
         } catch (e: any) {
-          if (e?.name === "AbortError" || attempt >= 2 || (e instanceof ApiError && e.status >= 400 && e.status < 500)) throw e;
-          await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+          if (e?.name === "AbortError" || attempt >= 4 || (e instanceof ApiError && e.status >= 400 && e.status < 500)) throw e;
+          await new Promise((r) => setTimeout(r, 800 * 2 ** attempt));
         }
       }
-      onProgress(Math.round(((i + 1) / chunkCount) * 96));
+      done++;
+      onProgress(pct());
     }
     const res = await api.finishChunked(uploadId, opts.expiresDays ?? 0);
     onProgress(100);
     return res.item;
-  } catch (e) {
-    void api.abortChunked(uploadId).catch(() => {});
+  } catch (e: any) {
+    // Only an explicit cancel throws the server parts away; anything else stays resumable.
+    const cancelled = e?.name === "AbortError" && opts.signal?.reason !== PAUSE;
+    const rejected = e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 409 && e.status !== 429;
+    if (cancelled || rejected) void api.abortChunked(uploadId).catch(() => {});
+    else if (e?.name !== "AbortError") throw new ApiError(e?.status ?? 0, { error: `${e?.message ?? "Upload failed"} - it can be resumed from the Files page.` });
     throw e;
   }
 }

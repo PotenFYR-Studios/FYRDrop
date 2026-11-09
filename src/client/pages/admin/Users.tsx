@@ -193,6 +193,11 @@ export default function Users() {
                   >
                     <Icon name="key" size={13} /> Reset password
                   </Btn>
+                  {(!!u.totpEnabled || (u.recoveryCodesLeft ?? 0) > 0) && (
+                    <Btn size="sm" variant="soft" disabled={busy} onClick={() => void act(u, "Two-step sign-in reset", () => api.adminReset2fa(u.id), `Remove every authenticator app, passkey and recovery code of ${u.name}? Use this when they lost their phone or key. They are signed out everywhere.`)}>
+                      <Icon name="fingerprint" size={13} /> Reset 2-step
+                    </Btn>
+                  )}
                   {u.role !== "owner" && (
                     <>
                       <Btn

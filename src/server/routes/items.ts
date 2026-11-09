@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 import { db, dirs } from "../db";
-import { items, shareLinks, userPins, clusterNodes, groups, groupMembers } from "../db/schema";
+import { items, shareLinks, userPins, clusterNodes, groups, groupMembers, uploads as uploadsTable } from "../db/schema";
 import { makeThumbnail, makeThumbnailFromBuffer, deleteThumb, thumbPath } from "../lib/thumbs";
 import { storedFileName } from "../lib/files";
 import { requireSession, type SessionCtx } from "../lib/auth";
@@ -19,6 +19,9 @@ import { hashSecret, PIN_RE } from "../lib/secrets";
 import { auditRequest } from "../lib/audit";
 import { ensureDefaultGroup, groupAccessSet, isGroupMember } from "../lib/groups";
 import { getIdentity, signRequest, seal, open } from "../lib/cluster";
+import { notify } from "../lib/notify";
+import { emit, itemPayload } from "../lib/webhooks";
+import { deleteShareEvents, shareStats, shareTotals } from "../lib/share-stats";
 import type { AppEnv } from "../lib/net";
 
 export const itemRoutes = new Hono<AppEnv>();
@@ -51,6 +54,8 @@ function sessionGroups(session: SessionCtx): Set<string> {
 function visibleTo(row: Item, session: SessionCtx) {
   const user = session.user;
   if (!user) return false;
+  // Copies kept for another node are storage, not content.
+  if (row.replicaOf) return false;
   if (user.role === "owner" || row.userId === user.id) return true;
   if (row.audience === "everyone") return true;
   if (row.audience === "selected") return ids(row.audienceUsers).includes(user.id);
@@ -162,6 +167,7 @@ function baseRow(c: Context, partial: Partial<Item> & Pick<Item, "type" | "name"
     uploadedBy: s.user?.name ?? s.deviceName,
     userId: s.user?.id ?? null,
     clusterOrigin: null,
+    replicaOf: null,
     groupId: "",
     category: "",
     labels: "",
@@ -181,6 +187,31 @@ function baseRow(c: Context, partial: Partial<Item> & Pick<Item, "type" | "name"
     expiresAt: null,
     ...partial,
   };
+}
+
+/** Tell local accounts that were just given read access by name. */
+function notifyShared(rows: Item[], session: SessionCtx, before = "") {
+  const prev = new Set(ids(before));
+  const byUser = new Map<string, Item[]>();
+  for (const row of rows) {
+    if (row.audience !== "selected") continue;
+    for (const uid of ids(row.audienceUsers)) {
+      // Remote principals ("<node>:<uuid>") are told by their own instance.
+      if (uid.includes(":") || prev.has(uid) || uid === session.user?.id) continue;
+      if (!byUser.has(uid)) byUser.set(uid, []);
+      byUser.get(uid)!.push(row);
+    }
+  }
+  const who = session.user?.name ?? session.deviceName;
+  for (const [uid, list] of byUser) {
+    const first = list[0]!;
+    const link = first.type === "text" ? "/notepad" : first.type === "url" ? "/links" : first.type === "image" ? "/gallery" : "/files";
+    notify(uid, "item.shared", {
+      title: list.length === 1 ? `${who} shared "${first.name}" with you` : `${who} shared ${list.length} items with you`,
+      body: list.slice(0, 10).map((r) => r.name).join("\n"),
+      link,
+    });
+  }
 }
 
 /* --------------------------------- Listing -------------------------------- */
@@ -338,6 +369,8 @@ itemRoutes.post(
       created.push(row);
     }
     publish({ scope: "items", action: "created" });
+    notifyShared(created, session);
+    for (const r of created) emit(r.userId, "item.created", { item: itemPayload(r) });
     auditRequest(c, "item.upload", true, `Uploaded ${created.length} file(s)`, {
       target: created.map((r) => r.name).join(", ").slice(0, 160),
       meta: { count: created.length, bytes: created.reduce((n, r) => n + r.size, 0) },
@@ -363,7 +396,9 @@ type Upload = {
   total: number;
   received: Set<number>;
   lastActivity: number;
+  createdAt: number;
   userId: string;
+  fingerprint: string;
   access: ReturnType<typeof parseAccess>;
   groupId: string;
   category: string;
@@ -371,29 +406,85 @@ type Upload = {
   finishing: boolean;
 };
 const activeUploads = new Map<string, Upload>();
-const UPLOAD_IDLE_MS = 6 * 60 * 60_000;
-const MAX_UPLOADS_PER_USER = 6;
+/** Unfinished uploads are kept for 7 days of inactivity so a closed tab or a reboot can resume them. */
+const UPLOAD_IDLE_MS = 7 * 24 * 60 * 60_000;
+const MAX_UPLOADS_PER_USER = 12;
 const partPath = (id: string, i: number) => path.join(dirs.tmp, `${id}.${i}.part`);
+const UUID_RE = /^[0-9a-f-]{36}$/i;
+let uploadsLoaded = false;
+
+/** Rebuild the in-memory table from the database and the part files on disk (after a restart). */
+function loadUploads() {
+  if (uploadsLoaded) return;
+  uploadsLoaded = true;
+  for (const r of db.select().from(uploadsTable).all()) {
+    const total = Math.ceil(r.size / r.chunkSize);
+    const received = new Set<number>();
+    for (let i = 0; i < total; i++) {
+      const expected = i === total - 1 ? r.size - i * r.chunkSize : r.chunkSize;
+      try {
+        if (fs.statSync(partPath(r.id, i)).size === expected) received.add(i);
+      } catch {
+        /* not uploaded yet */
+      }
+    }
+    let meta: any = {};
+    try {
+      meta = JSON.parse(r.meta);
+    } catch {
+      /* corrupt meta -> defaults */
+    }
+    activeUploads.set(r.id, {
+      name: r.name,
+      mime: r.mime,
+      size: r.size,
+      chunkSize: r.chunkSize,
+      total,
+      received,
+      lastActivity: r.lastActivity,
+      createdAt: r.createdAt,
+      userId: r.userId,
+      fingerprint: r.fingerprint,
+      access: meta.access ?? parseAccess({}, { defaultGroupId: meta.groupId ?? "" }),
+      groupId: meta.groupId ?? "",
+      category: meta.category ?? "",
+      labels: meta.labels ?? "",
+      finishing: false,
+    });
+  }
+}
 
 function dropUpload(id: string) {
   const u = activeUploads.get(id);
   activeUploads.delete(id);
+  touchThrottle.delete(id);
+  db.delete(uploadsTable).where(eq(uploadsTable.id, id)).run();
   if (!u) return;
   for (let i = 0; i < u.total; i++) fs.rmSync(partPath(id, i), { force: true });
 }
 
+const touchThrottle = new Map<string, number>();
+function touchUpload(id: string, u: Upload) {
+  u.lastActivity = Date.now();
+  // One DB write per upload per 30 s is plenty for the idle sweep.
+  if (u.lastActivity - (touchThrottle.get(id) ?? 0) < 30_000) return;
+  touchThrottle.set(id, u.lastActivity);
+  db.update(uploadsTable).set({ lastActivity: u.lastActivity }).where(eq(uploadsTable.id, id)).run();
+}
+
 /** Called by the maintenance timer: forget idle uploads and their temp parts. */
 export function sweepUploads() {
+  loadUploads();
   const now = Date.now();
   for (const [id, u] of activeUploads) if (!u.finishing && now - u.lastActivity > UPLOAD_IDLE_MS) dropUpload(id);
-  // Parts left behind by a crash/restart.
+  // Parts that belong to no known upload (crash mid-abort, deleted row) go after a day.
   try {
     for (const f of fs.readdirSync(dirs.tmp)) {
       const id = f.split(".")[0]!;
       if (activeUploads.has(id)) continue;
       const p = path.join(dirs.tmp, f);
       try {
-        if (now - fs.statSync(p).mtimeMs > UPLOAD_IDLE_MS) fs.rmSync(p, { force: true });
+        if (now - fs.statSync(p).mtimeMs > 24 * 60 * 60_000) fs.rmSync(p, { force: true });
       } catch {
         /* gone */
       }
@@ -404,49 +495,126 @@ export function sweepUploads() {
 }
 
 function ownUpload(c: Context): [string, Upload] | null {
+  loadUploads();
   const id = String(c.req.param("uploadId") ?? "");
   const u = activeUploads.get(id);
   if (!u || u.userId !== (c.get("session") as SessionCtx).user?.id) return null;
   return [id, u];
 }
 
+function describeUpload(id: string, u: Upload) {
+  const received = [...u.received].sort((a, b) => a - b);
+  return {
+    uploadId: id,
+    name: u.name,
+    mime: u.mime,
+    size: u.size,
+    fingerprint: u.fingerprint,
+    chunkSize: u.chunkSize,
+    chunkCount: u.total,
+    received,
+    receivedBytes: received.reduce((n, i) => n + (i === u.total - 1 ? u.size - i * u.chunkSize : u.chunkSize), 0),
+    createdAt: u.createdAt,
+    lastActivity: u.lastActivity,
+    finishing: u.finishing,
+  };
+}
+
+/** Unfinished uploads of the signed-in account, so the UI can offer to resume them after a reload. */
+itemRoutes.get("/upload/pending", (c) => {
+  loadUploads();
+  const me = c.get("session").user!.id;
+  const list = [...activeUploads].filter(([, u]) => u.userId === me).map(([id, u]) => describeUpload(id, u));
+  list.sort((a, b) => b.lastActivity - a.lastActivity);
+  return c.json({ uploads: list });
+});
+
+itemRoutes.get("/upload/status/:uploadId", (c) => {
+  const found = ownUpload(c);
+  if (!found) return c.json({ error: "Unknown uploadId." }, 404);
+  return c.json(describeUpload(found[0], found[1]));
+});
+
 itemRoutes.post("/upload/begin", async (c) => {
+  loadUploads();
   const limit = maxUploadBytes();
   const body = await c.req.json<any>().catch(() => null);
   const name = typeof body?.name === "string" ? body.name.trim().slice(0, 200) : "";
   const size = Number(body?.size ?? 0);
   if (!name || !Number.isSafeInteger(size) || size <= 0) return c.json({ error: "name and size are required." }, 400);
   if (size > limit) return c.json({ error: `File exceeds the configured limit of ${Math.round(limit / 1024 / 1024)} MB.` }, 413);
+  const userId = c.get("session").user!.id;
+  const fingerprint = typeof body?.fingerprint === "string" ? body.fingerprint.slice(0, 400) : "";
+  const resumeId = typeof body?.resumeId === "string" && UUID_RE.test(body.resumeId) ? body.resumeId : "";
+
+  // Resume: an explicit uploadId, or the same file (fingerprint) started earlier by this account.
+  let existing: [string, Upload] | undefined;
+  if (resumeId) {
+    const u = activeUploads.get(resumeId);
+    if (u && u.userId === userId) existing = [resumeId, u];
+    else return c.json({ error: "That unfinished upload no longer exists - start it again." }, 404);
+  }
+  if (!existing && fingerprint) existing = [...activeUploads].find(([, u]) => u.userId === userId && u.fingerprint === fingerprint && !u.finishing);
+  if (existing) {
+    const [id, u] = existing;
+    if (u.size !== size || u.name !== name) {
+      if (resumeId) return c.json({ error: "That is not the same file - pick the original file to resume." }, 409);
+    } else if (u.finishing) {
+      return c.json({ error: "This upload is already being finalised." }, 409);
+    } else {
+      if (fingerprint && !u.fingerprint) u.fingerprint = fingerprint;
+      touchUpload(id, u);
+      return c.json({ ...describeUpload(id, u), resumed: true });
+    }
+  }
+
   const refusal = storageRefusal(size);
   if (refusal) return c.json({ error: refusal }, 507);
-  const userId = c.get("session").user!.id;
   const me = c.get("session").user!;
   if (me.quotaMb && userStorageBytes(me.id) + size > me.quotaMb * 1024 * 1024) {
     return c.json({ error: "Your personal storage quota is full. Delete something or ask the owner to raise it." }, 507);
   }
   let mine = 0;
   for (const u of activeUploads.values()) if (u.userId === userId) mine++;
-  if (mine >= MAX_UPLOADS_PER_USER) return c.json({ error: "Too many uploads in progress - wait for one to finish." }, 429);
+  if (mine >= MAX_UPLOADS_PER_USER) return c.json({ error: "Too many unfinished uploads - resume or discard one first." }, 429);
   const chunkSize = Math.min(Math.max(Number(body?.chunkSize) || 8 * 1024 * 1024, 1024 * 1024), 32 * 1024 * 1024);
   const uploadId = crypto.randomUUID();
   const wanted = typeof body?.groupId === "string" ? body.groupId : "";
   const groupId = wanted && isGroupMember(wanted, userId) ? wanted : ensureDefaultGroup(userId);
-  activeUploads.set(uploadId, {
+  const now = Date.now();
+  const upload: Upload = {
     name,
     mime: typeof body?.mime === "string" && body.mime ? body.mime.slice(0, 100) : "application/octet-stream",
     size,
     chunkSize,
     total: Math.ceil(size / chunkSize),
     received: new Set(),
-    lastActivity: Date.now(),
+    lastActivity: now,
+    createdAt: now,
     userId,
+    fingerprint,
     access: parseAccess(body?.access ?? body, { defaultGroupId: groupId }),
     groupId,
     category: cleanCategory(body?.category),
     labels: cleanLabels(body?.labels),
     finishing: false,
-  });
-  return c.json({ uploadId, chunkSize, chunkCount: Math.ceil(size / chunkSize) }, 201);
+  };
+  db.insert(uploadsTable)
+    .values({
+      id: uploadId,
+      userId,
+      name: upload.name,
+      mime: upload.mime,
+      size,
+      chunkSize,
+      fingerprint,
+      meta: JSON.stringify({ access: upload.access, groupId, category: upload.category, labels: upload.labels }),
+      createdAt: now,
+      lastActivity: now,
+    })
+    .run();
+  activeUploads.set(uploadId, upload);
+  return c.json({ ...describeUpload(uploadId, upload), resumed: false }, 201);
 });
 
 itemRoutes.put(
@@ -472,12 +640,13 @@ itemRoutes.put(
     }
     fs.renameSync(tmp, partPath(id, index));
     upload.received.add(index);
-    upload.lastActivity = Date.now();
+    touchUpload(id, upload);
     return c.json({ ok: true, received: upload.received.size, of: upload.total });
   },
 );
 
 itemRoutes.post("/upload/abort", async (c) => {
+  loadUploads();
   const body = await c.req.json<{ uploadId?: string }>().catch(() => null);
   const u = activeUploads.get(body?.uploadId ?? "");
   if (u && u.userId === c.get("session").user?.id && !u.finishing) dropUpload(body!.uploadId!);
@@ -485,6 +654,7 @@ itemRoutes.post("/upload/abort", async (c) => {
 });
 
 itemRoutes.post("/upload/finish", async (c) => {
+  loadUploads();
   const body = await c.req.json<{ uploadId?: string; expiresDays?: number }>().catch(() => null);
   const uploadId = body?.uploadId ?? "";
   const upload = activeUploads.get(uploadId);
@@ -535,6 +705,8 @@ itemRoutes.post("/upload/finish", async (c) => {
   });
   db.insert(items).values(row).run();
   publish({ scope: "items", action: "created" });
+  notifyShared([row], c.get("session"));
+  emit(row.userId, "item.created", { item: itemPayload(row) });
   auditRequest(c, "item.upload", true, `Uploaded ${row.name} in ${upload.total} chunk(s)`, {
     target: row.name,
     meta: { size: row.size, chunks: upload.total, chunked: true },
@@ -567,6 +739,8 @@ itemRoutes.post("/text", async (c) => {
   });
   db.insert(items).values(row).run();
   publish({ scope: "items", action: "created", id: row.id });
+  notifyShared([row], c.get("session"));
+  emit(row.userId, "item.created", { item: itemPayload(row) });
   auditRequest(c, "item.note", true, `Created note "${row.name}"`, {
     target: row.name,
     meta: { size: row.size, read: row.audience, write: row.writeAccess, delete: row.deleteAccess },
@@ -605,6 +779,8 @@ itemRoutes.post("/url", async (c) => {
   });
   db.insert(items).values(row).run();
   publish({ scope: "items", action: "created", id: row.id });
+  notifyShared([row], c.get("session"));
+  emit(row.userId, "item.created", { item: itemPayload(row) });
   auditRequest(c, "item.link", true, `Saved link "${row.name}"`, {
     target: row.name,
     meta: { url: href, read: row.audience },
@@ -629,6 +805,7 @@ itemRoutes.patch("/:id/meta", async (c) => {
   if (Object.keys(patch).length === 0) return c.json({ error: "Nothing to update." }, 400);
   db.update(items).set(patch).where(eq(items.id, row.id)).run();
   publish({ scope: "items", action: "updated", id: row.id });
+  emit(row.userId, "item.updated", { item: itemPayload(load(row.id) ?? row) });
   auditRequest(c, "item.meta", true, `Updated the group, category or labels on "${row.name}"`, {
     target: row.name,
     meta: { groupId: patch.groupId ?? row.groupId, category: patch.category ?? row.category, labels: patch.labels ?? row.labels },
@@ -778,9 +955,11 @@ itemRoutes.post("/:id/share", async (c) => {
       pinHash: pin ? await hashSecret(pin) : null,
       note: typeof body?.note === "string" && body.note.trim() ? body.note.trim().slice(0, 200) : null,
       allowedUsers: normIds(body?.allowedUserIds),
+      createdById: session.user?.id ?? null,
     })
     .run();
   publish({ scope: "items", action: "shared", id: row.id });
+  emit(row.userId, "share.created", { item: itemPayload(row), expiresAt: expiryFrom(body?.expiresDays), maxDownloads: Number.isInteger(maxDl) && maxDl > 0 ? maxDl : null, pin: !!pin });
   auditRequest(c, "share.link-created", true, `Created a share link for "${row.name}"`, {
     target: row.name,
     meta: {
@@ -791,6 +970,58 @@ itemRoutes.post("/:id/share", async (c) => {
     },
   });
   return c.json({ token, url: `/s/${token}` }, 201);
+});
+
+/** Link creator: by account id, or by name for links made before ids were recorded. */
+function ownsLink(l: typeof shareLinks.$inferSelect, session: SessionCtx) {
+  if (!session.user) return false;
+  return l.createdById ? l.createdById === session.user.id : l.createdBy === session.user.name;
+}
+
+function publicLink(l: typeof shareLinks.$inferSelect, now = Date.now()) {
+  const { pinHash, createdById, ...rest } = l;
+  return {
+    ...rest,
+    hasPin: !!pinHash,
+    url: `/s/${l.token}`,
+    active: (!l.expiresAt || l.expiresAt > now) && (l.maxDownloads === null || l.downloads < l.maxDownloads),
+  };
+}
+
+/** Every share link the account can see the numbers for: links it made, plus links on items it manages. */
+itemRoutes.get("/shares/mine", (c) => {
+  const session = c.get("session");
+  const me = session.user!;
+  const all = db.select().from(shareLinks).all();
+  const itemIds = [...new Set(all.map((l) => l.itemId))];
+  const rows = itemIds.length ? db.select().from(items).where(inArray(items.id, itemIds.slice(0, 900))).all() : [];
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const mine = all.filter((l) => {
+    const it = byId.get(l.itemId);
+    return it && !it.deletedAt && (ownsLink(l, session) || (it.userId === me.id));
+  });
+  const totals = shareTotals(mine.map((l) => l.token));
+  const now = Date.now();
+  return c.json({
+    links: mine
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map((l) => {
+        const it = byId.get(l.itemId)!;
+        const t = totals.get(l.token) ?? { views: 0, downloads: 0, lastAt: null };
+        return { ...publicLink(l, now), item: { id: it.id, name: it.name, type: it.type, mime: it.mime, size: it.size }, views: t.views, lastAccessAt: t.lastAt };
+      }),
+  });
+});
+
+itemRoutes.get("/:id/share/:token/stats", (c) => {
+  const row = load(c.req.param("id"));
+  const session = c.get("session");
+  if (!row || !visibleTo(row, session)) return c.json({ error: "Not found." }, 404);
+  const link = db.select().from(shareLinks).where(and(eq(shareLinks.token, c.req.param("token")), eq(shareLinks.itemId, row.id))).get();
+  if (!link) return c.json({ error: "Not found." }, 404);
+  if (!canManage(row, session) && !ownsLink(link, session)) return c.json({ error: "Not allowed." }, 403);
+  const days = Math.min(Math.max(Number(c.req.query("days") ?? 30) || 30, 7), 180);
+  return c.json({ link: publicLink(link), item: { id: row.id, name: row.name }, ...shareStats(link.token, days) });
 });
 
 /** Existing links for an item (manager only; never exposes PIN hashes). */
@@ -805,7 +1036,7 @@ itemRoutes.get("/:id/share", (c) => {
     .from(shareLinks)
     .where(eq(shareLinks.itemId, row.id))
     .all()
-    .filter((l) => manager || l.createdBy === (session.user?.name ?? ""))
+    .filter((l) => manager || ownsLink(l, session))
     .map(({ pinHash, ...l }) => ({
       ...l,
       hasPin: !!pinHash,
@@ -821,8 +1052,9 @@ itemRoutes.delete("/:id/share/:token", (c) => {
   if (!row || !visibleTo(row, session)) return c.json({ error: "Not found." }, 404);
   const link = db.select().from(shareLinks).where(and(eq(shareLinks.token, c.req.param("token")), eq(shareLinks.itemId, row.id))).get();
   if (!link) return c.json({ error: "Not found." }, 404);
-  if (!canManage(row, session) && link.createdBy !== session.user?.name) return c.json({ error: "Not allowed." }, 403);
+  if (!canManage(row, session) && !ownsLink(link, session)) return c.json({ error: "Not allowed." }, 403);
   db.delete(shareLinks).where(eq(shareLinks.token, link.token)).run();
+  deleteShareEvents(link.token);
   auditRequest(c, "share.link-revoked", true, `Revoked a share link for "${row.name}"`, {
     target: row.name,
     meta: { linkCreatedBy: link.createdBy },
@@ -882,6 +1114,8 @@ itemRoutes.patch("/:id/audience", async (c) => {
   const acc = parseAccess({ read: { scope: body?.audience, userIds: body?.audienceUserIds }, write: { scope: row.writeAccess, userIds: ids(row.writeUsers) }, delete: { scope: row.deleteAccess, userIds: ids(row.deleteUsers) } });
   db.update(items).set({ audience: acc.audience, audienceUsers: acc.audienceUsers }).where(eq(items.id, row.id)).run();
   publish({ scope: "items", action: "audience", id: row.id });
+  emit(row.userId, "item.updated", { item: itemPayload(load(row.id) ?? row), change: "audience" });
+  notifyShared([load(row.id)!], c.get("session"), row.audience === "selected" ? row.audienceUsers : "");
   auditRequest(c, "item.audience", true, `Changed who can read "${row.name}"`, { target: row.name, meta: { read: acc.audience } });
   return c.json({ ok: true, audience: acc.audience, audienceUsers: acc.audienceUsers });
 });
@@ -904,6 +1138,7 @@ itemRoutes.patch("/:id/content", async (c) => {
     .where(eq(items.id, row.id))
     .run();
   publish({ scope: "items", action: "updated", id: row.id });
+  emit(row.userId, "item.updated", { item: itemPayload(load(row.id) ?? row) });
   return c.json({ item: serialize(load(row.id)!, session, { withContent: true }) });
 });
 
@@ -918,6 +1153,7 @@ itemRoutes.patch("/:id/name", async (c) => {
   if (!name) return c.json({ error: "Name is required." }, 400);
   db.update(items).set({ name }).where(eq(items.id, row.id)).run();
   publish({ scope: "items", action: "updated", id: row.id });
+  emit(row.userId, "item.updated", { item: itemPayload(load(row.id) ?? row) });
   auditRequest(c, "item.renamed", true, `Renamed "${row.name}" to "${name}"`, { target: name, meta: { from: row.name } });
   return c.json({ item: serialize(load(row.id)!, session, { withContent: row.type === "text" || row.type === "url" }) });
 });
@@ -931,6 +1167,8 @@ itemRoutes.patch("/:id/access", async (c) => {
   const body = await c.req.json<any>().catch(() => null);
   db.update(items).set(parseAccess(body)).where(eq(items.id, row.id)).run();
   publish({ scope: "items", action: "access", id: row.id });
+  emit(row.userId, "item.updated", { item: itemPayload(load(row.id) ?? row), change: "access" });
+  notifyShared([load(row.id)!], session, row.audience === "selected" ? row.audienceUsers : "");
   auditRequest(c, "item.access", true, `Changed access on "${row.name}"`, { target: row.name, meta: { ...parseAccess(body) } });
   return c.json({ item: serialize(load(row.id)!, session, { withContent: row.type === "text" || row.type === "url" }) });
 });
@@ -988,6 +1226,7 @@ itemRoutes.delete("/:id/purge", (c) => {
   deleteThumb(row.thumbName);
   db.delete(items).where(eq(items.id, row.id)).run();
   publish({ scope: "items", action: "purged", id: row.id });
+  emit(row.userId, "item.deleted", { item: itemPayload(row), permanent: true });
   auditRequest(c, "item.purged", true, `Deleted "${row.name}" forever`, { target: row.name, severity: "warn" });
   return c.json({ ok: true });
 });
@@ -1002,6 +1241,7 @@ itemRoutes.delete("/:id", (c) => {
   db.delete(shareLinks).where(eq(shareLinks.itemId, row.id)).run();
   db.delete(userPins).where(eq(userPins.itemId, row.id)).run();
   publish({ scope: "items", action: "deleted", id: row.id });
+  emit(row.userId, "item.deleted", { item: itemPayload(row), permanent: false });
   auditRequest(c, "item.trashed", true, `Moved "${row.name}" to trash`, { target: row.name, meta: { type: row.type, size: row.size }, severity: "warn" });
   return c.json({ ok: true, trashed: true });
 });

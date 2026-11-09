@@ -3,6 +3,9 @@ import { useAuth } from "../App";
 import { api, timeAgo, type DeviceSession } from "../api";
 import { Icon } from "../icons";
 import { Avatar, Badge, Btn, Card, Input, Label, Modal, PageHeader, Spinner, StatCard, useSync, useToast } from "../ui";
+import SecuritySettings from "../components/SecuritySettings";
+import NotificationPrefs from "../components/NotificationPrefs";
+import DeveloperSettings from "../components/DeveloperSettings";
 
 const PRESET_COLORS = [
   "#6366f1",
@@ -339,6 +342,10 @@ export default function Profile() {
           <span className="text-[11px] text-slate-500">Changing it signs other devices out of this account.</span>
         </div>
       </Card>
+
+      <SecuritySettings />
+      <NotificationPrefs />
+      <DeveloperSettings />
 
       <Card className="mt-5 p-6">
         <div className="flex flex-wrap items-center justify-between gap-2">

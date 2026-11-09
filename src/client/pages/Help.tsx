@@ -105,7 +105,8 @@ export default function Help() {
           </ul>
           <p className="text-slate-400">
             Recipients don't need an account - public links work in any browser, and a QR code is generated for easy
-            phone transfer.
+            phone transfer. The <span className="text-slate-200">Share links</span> page lists every link you made with
+            how often it was opened and downloaded, from which kind of device and which site; no IP addresses are kept.
           </p>
         </Section>
 
@@ -172,11 +173,23 @@ export default function Help() {
 
         
 
+        <Section icon="fingerprint" title="Two-step sign-in, email and API keys">
+          <ul className="list-disc space-y-1.5 pl-5 text-slate-400">
+            <li><span className="text-slate-200">Profile → Two-step sign-in</span>: add an authenticator app or a passkey. Save the recovery codes; each works once if you lose your phone or key. Passkeys need a host name (localhost, a .local name or a domain), not an IP address.</li>
+            <li><span className="text-slate-200">Email</span>: confirm an address to reset a forgotten password with "Forgot your password?" on the sign-in screen and to get notification emails. The owner sets up SMTP under Settings.</li>
+            <li><span className="text-slate-200">Notifications</span>: the bell shows shares, new sign-ins, security changes and storage alerts. Choose what is also emailed under Profile → Notifications.</li>
+            <li><span className="text-slate-200">API keys &amp; webhooks</span>: script FYRDrop with a personal key, or get a signed POST when your items change.</li>
+          </ul>
+        </Section>
+
         <Section icon="help" title="FAQ">
           <div className="space-y-2">
             <Faq q="I forgot the admin PIN. Can I recover it?">
               No - the PIN is stored hashed and cannot be recovered. Reset the instance (delete its data directory) and
               run setup again, then re-add your items.
+            </Faq>
+            <Faq q="I lost my phone and cannot pass the second step.">
+              Use one of your recovery codes. Without one, ask the owner to reset your two-step sign-in from Admin → Users.
             </Faq>
             <Faq q="Why do I need a new profile on every device?">
               Accounts are per-device by design: a phone and a laptop can have distinct identities, so admin block and
@@ -195,7 +208,8 @@ export default function Help() {
             </Faq>
             <Faq q="How large can uploads be?">
               Up to the per-file limit the admin set at startup (default 512 MB). Larger files are uploaded in chunks,
-              so even big files work on flaky connections.
+              so even big files work on flaky connections. If the tab closes or the server restarts, the upload appears
+              under Unfinished uploads on the Files page; pick the same file again to continue where it stopped.
             </Faq>
           </div>
         </Section>

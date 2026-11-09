@@ -8,6 +8,7 @@ import { ensureDefaultGroup, canManageGroup, isGroupMember } from "../lib/groups
 import { auditRequest } from "../lib/audit";
 import { publish } from "../lib/events";
 import type { AppEnv } from "../lib/net";
+import { notify } from "../lib/notify";
 
 export const groupRoutes = new Hono<AppEnv>();
 groupRoutes.use("*", requireSession);
@@ -129,6 +130,7 @@ groupRoutes.post("/:id/members", async (c) => {
   db.insert(groupMembers).values({ groupId: g.id, userId: user.id, role: "member", addedBy: me.id, createdAt: Date.now() }).run();
   publish({ scope: "settings", action: "group-member" });
   auditRequest(c, "group.member-added", true, `Added ${user.name} to "${g.name}"`, { target: g.name, meta: { user: user.username } });
+  if (user.id !== me.id) notify(user.id, "group.added", { title: `${me.name} added you to the group "${g.name}"`, body: g.description || "", link: "/groups" });
   return c.json({ ok: true, member: { userId: user.id, user: publicUser(user) } }, 201);
 });
 

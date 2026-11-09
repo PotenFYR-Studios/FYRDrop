@@ -24,6 +24,8 @@ import { rateLimit, recordFailure, clearFailures, lockoutRemaining } from "../li
 import { auditRequest, type LogInput } from "../lib/audit";
 import { identifyDevice, parseUserAgent } from "../lib/device";
 import { cleanAvatar, cleanColor } from "./users";
+import { issueTicket, secondFactorMethods } from "../lib/second-factor";
+import { notify } from "../lib/notify";
 import type { AppEnv } from "../lib/net";
 
 export const authRoutes = new Hono<AppEnv>();
@@ -148,7 +150,7 @@ authRoutes.get("/me", requireDevice, (c) => {
 });
 
 /** Bind the current device session to an account by rotating it into a fresh session. */
-function rotateInto(c: Context, userId: string) {
+export function rotateInto(c: Context, userId: string) {
   const prev = c.get("session");
   revokeSession(prev.token);
   const ipInfo = clientIpInfo(c);
@@ -188,11 +190,30 @@ authRoutes.post("/account/login", rateLimit({ name: "acct", windowMs: 60_000, ma
     return c.json({ error: "This account has been blocked by the administrator." }, 403);
   }
   clearFailures(lockKey);
-  rotateInto(c, u.id);
-  audit(c, "account.login", true, `${u.name} signed in on "${c.get("session").deviceName}"`, { actor: { id: u.id, name: u.name }, target: c.get("session").deviceName, meta: { username, device: c.get("session").deviceName } });
-  publish({ scope: "sessions", action: "account-login" });
-  return c.json({ ok: true, user: publicUser(u), mustChangePassword: !!u.mustChangePassword });
+  const methods = secondFactorMethods(u);
+  if (methods.length > 0) {
+    // Password is right, but the account wants a second factor before the session is bound.
+    const ticket = issueTicket(u.id, c.get("session").token);
+    audit(c, "account.login-2fa-required", true, `${u.name} passed the password step; waiting for the second factor`, { actor: { id: u.id, name: u.name }, target: c.get("session").deviceName, meta: { methods } });
+    return c.json({ ok: true, needs2fa: true, ticket, methods });
+  }
+  return finishAccountLogin(c, u, "password");
 });
+
+/** Rotate into the account and answer like a completed sign-in (shared with the 2FA step). */
+export function finishAccountLogin(c: Context, u: typeof users.$inferSelect, via: string) {
+  const device = c.get("session").deviceName;
+  rotateInto(c, u.id);
+  audit(c, "account.login", true, `${u.name} signed in on "${device}"${via === "password" ? "" : ` (${via})`}`, { actor: { id: u.id, name: u.name }, target: device, meta: { username: u.username, device, via } });
+  publish({ scope: "sessions", action: "account-login" });
+  const ip = clientIp(c);
+  notify(u.id, "security.login", {
+    title: `New sign-in on "${device}"`,
+    body: `Your account was signed in${via === "password" ? " with your password" : ` with a ${via.replace(/ ".*"$/, "")}`} from ${ip} at ${new Date().toUTCString()}.\nIf this was not you, change your password and sign that device out under Profile.`,
+    link: "/profile",
+  });
+  return c.json({ ok: true, user: publicUser(u), mustChangePassword: !!u.mustChangePassword });
+}
 
 /** Stage 2b - first visit: create an account (normal user). */
 authRoutes.post("/account/register", rateLimit({ name: "reg", windowMs: 10 * 60_000, max: 10 }), requireDevice, async (c) => {
@@ -222,6 +243,11 @@ authRoutes.post("/account/register", rateLimit({ name: "reg", windowMs: 10 * 60_
     color: cleanColor(body?.color),
     role: "user",
     isBlocked: 0,
+    email: null,
+    emailVerified: 0,
+    totpSecret: null,
+    totpEnabled: 0,
+    recoveryCodes: "",
     quotaMb: 0,
     createdAt: now,
     lastSeenAt: now,
@@ -272,6 +298,7 @@ authRoutes.post("/account/password", rateLimit({ name: "pw", windowMs: 60_000, m
   if (u.role === "owner") forgetInitialPassword();
   // Every other device signed into this account must re-authenticate.
   const kicked = revokeUserSessions(u.id, session.token);
+  notify(u.id, "security.account", { title: "Your password was changed", body: kicked ? `${kicked} other device(s) were signed out.` : "", link: "/profile" });
   audit(c, "account.password-changed", true, `${u.name} changed the password`, { actor: { id: u.id, name: u.name }, target: u.username ?? "", meta: { signedOutDevices: kicked } });
   return c.json({ ok: true, signedOut: kicked });
 });

@@ -14,6 +14,9 @@ import { verifySecret } from "../lib/secrets";
 import { rateLimit, recordFailure, clearFailures, lockoutRemaining } from "../lib/security";
 import { clientIp, type AppEnv } from "../lib/net";
 import { auditRequest } from "../lib/audit";
+import { notify } from "../lib/notify";
+import { emit, itemPayload } from "../lib/webhooks";
+import { recordShareEvent } from "../lib/share-stats";
 
 /** Public, token-gated share endpoints - mounted at /api/share. No PIN session required. */
 export const shareRoutes = new Hono<AppEnv>();
@@ -60,6 +63,7 @@ shareRoutes.get("/:token", (c) => {
   if (exhausted(link)) return c.json({ error: "This share link has reached its download limit." }, 410);
   const gate = audienceGate(link, c);
   if (gate.blocked) {
+    recordShareEvent(c, link.token, link.itemId, "blocked");
     return c.json(
       gate.needsAuth
         ? { error: "This link is restricted. Sign in with your FYRDrop account to open it.", needsAuth: true }
@@ -69,6 +73,7 @@ shareRoutes.get("/:token", (c) => {
   }
   const item = liveItem(link.itemId);
   if (!item) return c.json({ error: "The shared item is no longer available." }, 404);
+  recordShareEvent(c, link.token, link.itemId, "view", c.req.query("ref"));
   // The text preview is only revealed after the PIN (if any) is verified.
   const plain = !link.pinHash && item.content ? decryptString(item.content) : null;
   const preview = item.type === "text" ? plain?.slice(0, 4000) : item.type === "url" && plain && isHttpUrl(plain) ? plain : undefined;
@@ -96,6 +101,7 @@ shareRoutes.post("/:token/unlock", async (c) => {
     if (!ok) {
       recordFailure(lockKey);
       recordFailure(`share-ip:${clientIp(c)}`);
+      recordShareEvent(c, link.token, link.itemId, "pin_failed");
       const shared = liveItem(link.itemId);
       auditRequest(c, "share.pin-failed", false, `Wrong PIN on a share link${shared ? ` for "${shared.name}"` : ""}`, {
         actor: { name: "share link" },
@@ -105,6 +111,7 @@ shareRoutes.post("/:token/unlock", async (c) => {
       return c.json({ error: "Wrong PIN for this link." }, 401);
     }
     clearFailures(lockKey);
+    recordShareEvent(c, link.token, link.itemId, "unlock");
   }
   const item = liveItem(link.itemId);
   const plain = item?.content ? decryptString(item.content) : null;
@@ -146,6 +153,13 @@ shareRoutes.get("/:token/download", async (c) => {
     .all();
   if (claimed.length === 0) return c.json({ error: "Download limit reached." }, 410);
   db.update(items).set({ downloads: sql`${items.downloads} + 1` }).where(eq(items.id, item.id)).run();
+  recordShareEvent(c, link.token, link.itemId, "download");
+  emit(item.userId, "share.downloaded", { item: itemPayload(item), downloads: (link.downloads ?? 0) + 1, maxDownloads: link.maxDownloads, ip: clientIp(c) });
+  notify(item.userId, "share.downloaded", {
+    title: `"${item.name}" was downloaded from a share link`,
+    body: link.maxDownloads ? `${(link.downloads ?? 0) + 1} of ${link.maxDownloads} downloads used.` : `${(link.downloads ?? 0) + 1} download(s) so far.`,
+    link: "/files",
+  });
   auditRequest(c, "share.download", true, `Someone downloaded "${item.name}" from a share link`, {
     actor: { name: "public link" },
     target: item.name,
@@ -183,7 +197,11 @@ eventRoutes.get("/", (c) => {
       if (closed) return;
       stream.writeSSE({ event, data }).catch(() => cleanup());
     };
-    const offSync = onSync((evt: SyncEvent) => send("sync", JSON.stringify(evt)));
+    const me = session.user?.id ?? null;
+    const offSync = onSync((evt: SyncEvent) => {
+      if (evt.userId && evt.userId !== me) return;
+      send("sync", JSON.stringify(evt));
+    });
     const offSignal = onSignal(session.token, (msg) => send("signal", JSON.stringify(msg)));
     // Heartbeat keeps proxies from idling the stream out and lets us notice
     // revoked sessions (blocked user, signed out elsewhere) within ~25 s.

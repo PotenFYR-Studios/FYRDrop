@@ -8,6 +8,7 @@ import { BlurFade, DotPattern } from "./components/magic";
 import { resetSync } from "./sync";
 import Login from "./pages/Login";
 import SignIn from "./pages/SignIn";
+import NotificationBell from "./components/NotificationBell";
 
 // Route-level code splitting: the sign-in screen no longer ships the whole app,
 // and owner-only admin pages download only when an owner opens them.
@@ -15,6 +16,7 @@ const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Files = lazy(() => import("./pages/Files"));
 const Notepad = lazy(() => import("./pages/Notepad"));
 const Links = lazy(() => import("./pages/Links"));
+const Shares = lazy(() => import("./pages/Shares"));
 const Groups = lazy(() => import("./pages/Groups"));
 const Trash = lazy(() => import("./pages/Trash"));
 const Gallery = lazy(() => import("./pages/Gallery"));
@@ -24,6 +26,7 @@ const Certs = lazy(() => import("./pages/Certs"));
 const Profile = lazy(() => import("./pages/Profile"));
 const Help = lazy(() => import("./pages/Help"));
 const SharePage = lazy(() => import("./pages/SharePage"));
+const ResetPassword = lazy(() => import("./pages/ResetPassword"));
 const Analytics = lazy(() => import("./pages/admin/Analytics"));
 const Devices = lazy(() => import("./pages/admin/Devices"));
 const Logs = lazy(() => import("./pages/admin/Logs"));
@@ -33,6 +36,7 @@ const AdminSettings = lazy(() => import("./pages/admin/Settings"));
 const Users = lazy(() => import("./pages/admin/Users"));
 const Cluster = lazy(() => import("./pages/admin/Cluster"));
 const AdminGroups = lazy(() => import("./pages/admin/Groups"));
+const Backups = lazy(() => import("./pages/admin/Backups"));
 
 type AuthState = {
   ready: boolean;
@@ -67,6 +71,7 @@ const NAV: NavItem[] = [
   { to: "/files", label: "Files", icon: "folder" },
   { to: "/notepad", label: "Notepad", icon: "note" },
   { to: "/links", label: "Links", icon: "link" },
+  { to: "/shares", label: "Share links", icon: "share" },
   { to: "/groups", label: "Groups", icon: "users" },
   { to: "/trash", label: "Trash", icon: "trash" },
   { to: "/gallery", label: "Gallery", icon: "image" },
@@ -84,6 +89,7 @@ const ADMIN_NAV: NavItem[] = [
   { to: "/admin/groups", label: "Groups", icon: "users" },
   { to: "/admin/security", label: "Security", icon: "shieldCheck" },
   { to: "/admin/cluster", label: "Cluster", icon: "globe" },
+  { to: "/admin/backups", label: "Backups", icon: "database" },
   { to: "/admin/settings", label: "Settings", icon: "settings" },
 ];
 
@@ -185,6 +191,9 @@ function Shell({ children }: { children: ReactNode }) {
           <span className="flex-1 text-left">Search</span>
           <kbd className="rounded border border-[#2a3247] px-1 py-0.5 text-[9px]">Ctrl K</kbd>
         </button>
+        <div className="-mt-1 mb-3 flex justify-end">
+          <NotificationBell />
+        </div>
         <nav className="space-y-0.5">
           {NAV.map((n) => (
             <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => navClass(isActive)}>
@@ -235,6 +244,7 @@ function Shell({ children }: { children: ReactNode }) {
           </span>
           <div className="flex shrink-0 items-center gap-2">
             <LiveIndicator status={syncStatus} />
+            <NotificationBell compact />
             <NavLink to="/profile" aria-label="Profile">
               <Avatar user={user} size={28} />
             </NavLink>
@@ -297,6 +307,7 @@ function AuthedApp() {
         <Route path="/files" element={<Files />} />
         <Route path="/notepad" element={<Notepad />} />
         <Route path="/links" element={<Links />} />
+        <Route path="/shares" element={<Shares />} />
         <Route path="/groups" element={<Groups />} />
         <Route path="/trash" element={<Trash />} />
         <Route path="/gallery" element={<Gallery />} />
@@ -315,6 +326,7 @@ function AuthedApp() {
         <Route path="/admin/security" element={<Security />} />
         <Route path="/admin/cluster" element={<Cluster />} />
         <Route path="/admin/settings" element={<AdminSettings />} />
+        <Route path="/admin/backups" element={<Backups />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Shell>
@@ -418,6 +430,14 @@ function Root() {
               }
             />
           ))}
+          <Route
+            path="/reset-password"
+            element={
+              <Suspense fallback={<div className="flex h-screen items-center justify-center"><Spinner size={28} /></div>}>
+                <ResetPassword />
+              </Suspense>
+            }
+          />
           <Route
             path="*"
             element={
