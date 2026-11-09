@@ -351,8 +351,21 @@ adminRoutes.post("/config", async (c) => {
   if (typeof body.trustProxy === "boolean") patch.trustProxy = body.trustProxy;
   if (typeof body.showPinInLogs === "boolean") patch.showPinInLogs = body.showPinInLogs;
   const next = writeConfig(patch);
-  audit(c, "config.updated", true, `System config updated: ${Object.keys(patch).join(", ")}`, { target: "config", meta: { changed: Object.keys(patch) } });
-  return c.json({ ok: true, config: next });
+  const restartFields = ["port", "networkMode", "tlsCommonName", "sessionTtlDays", "trustProxy"];
+  const restartRequired = Object.keys(patch).filter((k) => restartFields.includes(k));
+  audit(c, "config.updated", true, `System config updated: ${Object.keys(patch).join(", ")}`, {
+    target: "config",
+    severity: restartRequired.length ? "warn" : "info",
+    meta: { changed: Object.keys(patch), restartRequired },
+  });
+  return c.json({ ok: true, config: next, restartRequired });
+});
+
+adminRoutes.post("/restart", (c) => {
+  audit(c, "system.restart", true, "Restart requested from Settings", { severity: "warn" });
+  scheduleRestart();
+  setTimeout(() => process.exit(0), 600);
+  return c.json({ ok: true, restarting: true });
 });
 
 adminRoutes.get("/connections", (c) => {

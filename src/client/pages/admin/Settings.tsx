@@ -280,6 +280,7 @@ export default function AdminSettings() {
           </ul>
         )}
       </Card>
+      <RestartCard />
       <UpdateCard />
     </div>
   );
@@ -504,6 +505,142 @@ function UpdateCard() {
             </div>
           </div>
         )}
+      </Modal>
+    </>
+  );
+}
+
+/* ------------------------ Network / restart settings ----------------------- */
+
+function RestartCard() {
+  const { push } = useToast();
+  const [cfg, setCfg] = useState<any>(null);
+  const [saving, setSaving] = useState(false);
+  const [pending, setPending] = useState<string[] | null>(null);
+  const [restarting, setRestarting] = useState(false);
+
+  useEffect(() => {
+    api
+      .config()
+      .then((r) => setCfg(r.config))
+      .catch(() => {});
+  }, []);
+
+  const save = async () => {
+    if (!cfg) return;
+    setSaving(true);
+    try {
+      const r = await api.saveConfig({
+        port: Number(cfg.port),
+        networkMode: cfg.networkMode,
+        tlsCommonName: cfg.tlsCommonName,
+        sessionTtlDays: Number(cfg.sessionTtlDays),
+        trustProxy: !!cfg.trustProxy,
+      });
+      setCfg(r.config);
+      if (r.restartRequired?.length) setPending(r.restartRequired);
+      else push("ok", "Saved");
+    } catch (e: any) {
+      push("err", e?.message ?? "Could not save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const restart = async () => {
+    setRestarting(true);
+    try {
+      await api.restartServer();
+    } catch {
+      /* expected while the process exits */
+    }
+    const started = Date.now();
+    const timer = setInterval(async () => {
+      try {
+        if ((await fetch("/health", { cache: "no-store" })).ok) {
+          clearInterval(timer);
+          window.location.reload();
+        }
+      } catch {
+        /* still down */
+      }
+      if (Date.now() - started > 60_000) {
+        clearInterval(timer);
+        setRestarting(false);
+      }
+    }, 1200);
+  };
+
+  if (!cfg) return null;
+
+  return (
+    <>
+      <Card className="mt-4 p-5">
+        <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-white">
+          <Icon name="network" size={15} className="text-indigo-300" /> Network and restart
+        </h2>
+        <p className="mb-3 text-xs text-slate-500">
+          Port, TLS mode and proxy trust are read at boot. Saving them asks for a restart; nothing changes until then.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div>
+            <Label>Port</Label>
+            <Input type="number" min={1} max={65535} value={cfg.port} onChange={(e) => setCfg({ ...cfg, port: Number(e.target.value) })} />
+          </div>
+          <div>
+            <Label>TLS mode</Label>
+            <select
+              value={cfg.networkMode}
+              onChange={(e) => setCfg({ ...cfg, networkMode: e.target.value })}
+              className="w-full rounded-xl border border-[#2a3247] bg-[#12161f] px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+            >
+              <option value="auto">Auto (self-signed)</option>
+              <option value="off">Off (HTTP)</option>
+              <option value="custom">Custom certificate</option>
+            </select>
+          </div>
+          <div>
+            <Label>TLS common name</Label>
+            <Input value={cfg.tlsCommonName ?? ""} onChange={(e) => setCfg({ ...cfg, tlsCommonName: e.target.value })} />
+          </div>
+          <div>
+            <Label>Session length (days)</Label>
+            <Input type="number" min={1} max={365} value={cfg.sessionTtlDays} onChange={(e) => setCfg({ ...cfg, sessionTtlDays: Number(e.target.value) })} />
+          </div>
+        </div>
+        <label className="mt-3 flex items-center gap-2 text-xs text-slate-400">
+          <input type="checkbox" checked={!!cfg.trustProxy} onChange={(e) => setCfg({ ...cfg, trustProxy: e.target.checked })} className="accent-indigo-500" />
+          Trust X-Forwarded-For from a reverse proxy (only enable when one sits in front)
+        </label>
+        {pending && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/[0.08] px-3 py-2 text-xs text-amber-100">
+            <Icon name="alert" size={14} />
+            Restart required to apply: <span className="mono">{pending.join(", ")}</span>
+            <Btn size="sm" className="ml-auto" onClick={() => void restart()} disabled={restarting}>
+              {restarting ? <Spinner size={13} /> : <Icon name="power" size={13} />} Restart now
+            </Btn>
+          </div>
+        )}
+        <div className="mt-3 flex justify-end">
+          <Btn size="sm" onClick={() => void save()} disabled={saving}>
+            {saving ? <Spinner size={13} /> : <Icon name="check" size={13} />} Save network settings
+          </Btn>
+        </div>
+      </Card>
+
+      <Modal open={pending !== null && !restarting} onClose={() => setPending(null)} title="Restart required">
+        <div className="space-y-3">
+          <p className="text-sm text-slate-300">
+            These settings only apply after a restart: <span className="mono text-white">{pending?.join(", ")}</span>.
+          </p>
+          <p className="text-xs text-slate-500">The server closes and the restart helper starts it again. This page reconnects on its own.</p>
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => setPending(null)}>Later</Btn>
+            <Btn onClick={() => void restart()} disabled={restarting}>
+              {restarting ? <Spinner size={14} /> : <Icon name="power" size={14} />} Restart now
+            </Btn>
+          </div>
+        </div>
       </Modal>
     </>
   );

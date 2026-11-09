@@ -512,7 +512,8 @@ export const api = {
   cleanup: (mode: "expired" | "orphans" | "all") => req<any>("/api/admin/cleanup", post({ mode })),
   security: (q?: string) => req<any>(`/api/admin/security${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   config: () => req<{ config: any; restartFields: string[] }>("/api/admin/config"),
-  saveConfig: (p: Record<string, unknown>) => req<{ ok: boolean; config: any }>("/api/admin/config", post(p)),
+  saveConfig: (p: Record<string, unknown>) => req<{ ok: boolean; config: any; restartRequired: string[] }>("/api/admin/config", post(p)),
+  restartServer: () => req<{ ok: boolean; restarting: boolean }>("/api/admin/restart", post()),
 
   // federation (owner)
   peers: () => req<{ peers: any[] }>("/api/federation/peers"),

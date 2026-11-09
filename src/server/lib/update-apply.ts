@@ -39,8 +39,8 @@ async function main() {
   try {
     pending = JSON.parse(fs.readFileSync(pendingPath, "utf8"));
   } catch {
-    log("no pending update");
-    return;
+    log("no pending update - plain restart");
+    pending = {};
   }
 
   if (pending.mode === "source" && pending.staging) {
@@ -86,8 +86,10 @@ async function main() {
     log("restart left to the process manager");
   }
 
-  writeHistory(String(pending.from ?? ""), String(pending.to ?? ""));
-  fs.rmSync(pendingPath, { force: true });
+  if (pending.to) {
+    writeHistory(String(pending.from ?? ""), String(pending.to ?? ""));
+    fs.rmSync(pendingPath, { force: true });
+  }
   try {
     fs.rmSync(path.join(updateDir, "failed.json"), { force: true });
   } catch {
