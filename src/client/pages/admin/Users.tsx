@@ -7,6 +7,8 @@ import { Avatar, Badge, Btn, Card, CopyBtn, Empty, Input, Modal, PageHeader, use
 type UserStat = UserProfile & {
   itemCount: number;
   storageBytes: number;
+  quotaMb: number;
+  quotaBytes: number;
   downloads: number;
   devices: number;
   lastIp: string;
@@ -132,6 +134,25 @@ export default function Users() {
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-slate-500">
                       <span>{u.itemCount} items</span>
                       <span>{humanSize(u.storageBytes)}</span>
+                      <button
+                        onClick={async () => {
+                          const raw = window.prompt(`Personal quota for ${u.name} in MB (0 = instance limit only)`, String(u.quotaMb ?? 0));
+                          if (raw === null) return;
+                          const mb = Number(raw);
+                          if (!Number.isFinite(mb) || mb < 0) return;
+                          try {
+                            await api.setUserQuota(u.id, Math.round(mb));
+                            push("ok", "Quota updated");
+                            reload();
+                          } catch (e: any) {
+                            push("err", e?.message ?? "Could not update quota");
+                          }
+                        }}
+                        className={`rounded-full border px-2 py-0.5 text-[10px] transition ${u.quotaMb ? "border-amber-500/30 bg-amber-500/10 text-amber-300" : "border-[#2a3247] text-slate-500 hover:text-slate-300"}`}
+                        title="Set a personal storage quota"
+                      >
+                        {u.quotaMb ? humanSize(u.quotaBytes) : "no quota"}
+                      </button>
                       <Link to={`/admin/devices?user=${u.id}`} className="inline-flex items-center gap-1 text-slate-400 transition hover:text-slate-200" title="Show this account's devices">
                         <Icon name="smartphone" size={11} />
                         {u.devices} device{u.devices === 1 ? "" : "s"}

@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { db, dirs, dbFile } from "../db";
-import { storageUnits } from "../db/schema";
+import { storageUnits, items } from "../db/schema";
+import { eq, sql } from "drizzle-orm";
 import { encryptBuffer } from "./crypto";
 import { getSettings } from "./settings";
 
@@ -194,4 +195,10 @@ export function storageRefusal(bytes: number): string | null {
 
 export function markUsageDirty() {
   usageCache = null;
+}
+
+/** Bytes stored by one account, including items currently in trash. */
+export function userStorageBytes(userId: string): number {
+  const row = db.select({ n: sql<number>`coalesce(sum(${items.size}), 0)` }).from(items).where(eq(items.userId, userId)).get();
+  return Number(row?.n ?? 0);
 }

@@ -13,6 +13,7 @@ import { publish } from "../lib/events";
 import { encryptString, decryptString, encryptPartsToFile, decryptedWebStream, readDecrypted } from "../lib/crypto";
 import { writeStoredFile, pathForRef, deleteStoredFile, unitDirForWrite, makeRef, storageRefusal, markUsageDirty } from "../lib/storage";
 import { maxUploadBytes } from "../lib/settings";
+import { userStorageBytes } from "../lib/storage";
 import { userContentHeaders, ITEM_TYPES } from "../lib/content";
 import { hashSecret, PIN_RE } from "../lib/secrets";
 import { auditRequest } from "../lib/audit";
@@ -293,6 +294,10 @@ itemRoutes.post(
     const files = form.getAll("files").filter((f): f is File => f instanceof File).slice(0, 50);
     if (files.length === 0) return c.json({ error: "No files provided." }, 400);
     const total = files.reduce((n, f) => n + f.size, 0);
+    const account = c.get("session").user;
+    if (account?.quotaMb && userStorageBytes(account.id) + total > account.quotaMb * 1024 * 1024) {
+      return c.json({ error: "Your personal storage quota is full. Delete something or ask the owner to raise it." }, 507);
+    }
     const refusal = storageRefusal(total);
     if (refusal) return c.json({ error: refusal }, 507);
     const expiresAt = expiryFrom(form.get("expiresDays"));
@@ -415,6 +420,10 @@ itemRoutes.post("/upload/begin", async (c) => {
   const refusal = storageRefusal(size);
   if (refusal) return c.json({ error: refusal }, 507);
   const userId = c.get("session").user!.id;
+  const me = c.get("session").user!;
+  if (me.quotaMb && userStorageBytes(me.id) + size > me.quotaMb * 1024 * 1024) {
+    return c.json({ error: "Your personal storage quota is full. Delete something or ask the owner to raise it." }, 507);
+  }
   let mine = 0;
   for (const u of activeUploads.values()) if (u.userId === userId) mine++;
   if (mine >= MAX_UPLOADS_PER_USER) return c.json({ error: "Too many uploads in progress - wait for one to finish." }, 429);

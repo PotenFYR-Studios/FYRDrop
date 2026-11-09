@@ -59,6 +59,7 @@ function ensureOwner() {
       name: "Administrator",
       passwordHash: null,
       mustChangePassword: 1,
+      quotaMb: 0,
       avatar: AVATAR_SVG("A", "#6366f1", "#22d3ee"),
       color: "#6366f1",
       role: "owner",

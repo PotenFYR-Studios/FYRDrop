@@ -108,6 +108,8 @@ admin.get("/all", (c) => {
         ...publicUser(u)!,
         itemCount: i?.n ?? 0,
         storageBytes: i?.bytes ?? 0,
+        quotaMb: u.quotaMb,
+        quotaBytes: u.quotaMb * 1024 * 1024,
         downloads: i?.dl ?? 0,
         devices: s?.devices ?? 0,
         lastIp: s?.lastIp ?? "",
@@ -124,7 +126,7 @@ function target(id: string) {
 admin.patch("/:id", async (c) => {
   const row = target(c.req.param("id"));
   if (!row) return c.json({ error: "Not found." }, 404);
-  const body = await c.req.json<{ name?: string; color?: string }>().catch(() => null);
+  const body = await c.req.json<{ name?: string; color?: string; quotaMb?: number }>().catch(() => null);
   const patch: Partial<typeof users.$inferInsert> = {};
   if (typeof body?.name === "string") {
     const name = body.name.trim();
@@ -132,6 +134,16 @@ admin.patch("/:id", async (c) => {
     patch.name = name.slice(0, 40);
   }
   if (typeof body?.color === "string") patch.color = cleanColor(body.color);
+  if (body?.quotaMb !== undefined) {
+    const q = Number(body.quotaMb);
+    if (!Number.isFinite(q) || q < 0 || q > 10_000_000) return c.json({ error: "Quota must be between 0 and 10000000 MB." }, 400);
+    patch.quotaMb = Math.round(q);
+  }
+  if (body?.quotaMb !== undefined) {
+    const q = Number(body.quotaMb);
+    if (!Number.isFinite(q) || q < 0 || q > 10_000_000) return c.json({ error: "Quota must be between 0 and 10000000 MB." }, 400);
+    patch.quotaMb = Math.round(q);
+  }
   if (Object.keys(patch).length === 0) return c.json({ error: "Nothing to update." }, 400);
   db.update(users).set(patch).where(eq(users.id, row.id)).run();
   publish({ scope: "sessions", action: "profile-updated" });

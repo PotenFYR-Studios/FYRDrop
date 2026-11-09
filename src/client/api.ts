@@ -424,6 +424,7 @@ export const api = {
   signOutUser: (id: string) => req<{ count: number }>(`/api/users/${id}/signout`, post()),
   resetPassword: (id: string) => req<{ temporaryPassword: string }>(`/api/users/${id}/reset-password`, post()),
   setUserBlocked: (id: string, blocked: boolean) => req(`/api/users/${id}/block`, post({ blocked })),
+  setUserQuota: (id: string, quotaMb: number) => req<{ ok: boolean }>(`/api/users/${id}`, patch({ quotaMb })),
   deleteUser: (id: string, purge = false) => req<{ ok: boolean; purged: number }>(`/api/users/${id}${purge ? "?purge=1" : ""}`, { method: "DELETE" }),
 
   // storage units + host filesystem browser (owner)

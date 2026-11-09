@@ -222,6 +222,7 @@ authRoutes.post("/account/register", rateLimit({ name: "reg", windowMs: 10 * 60_
     color: cleanColor(body?.color),
     role: "user",
     isBlocked: 0,
+    quotaMb: 0,
     createdAt: now,
     lastSeenAt: now,
   };

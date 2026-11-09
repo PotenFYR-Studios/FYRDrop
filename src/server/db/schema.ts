@@ -137,6 +137,8 @@ export const users = sqliteTable("users", {
   passwordHash: text("password_hash"),
   /** 1 = the next sign-in must choose a new password (bootstrap admin, admin reset). */
   mustChangePassword: integer("must_change_password").notNull().default(0),
+  /** Personal storage cap in MB; 0 means the instance quota only. */
+  quotaMb: integer("quota_mb").notNull().default(0),
   /** Optional avatar - small data URL (<= 200 KB). */
   avatar: text("avatar"),
   color: text("color").notNull().default("#6366f1"),
