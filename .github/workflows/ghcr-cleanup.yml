@@ -41,6 +41,8 @@ jobs:
         uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          # GHCR stores the image name in lowercase (docker/metadata-action lowercases it).
+          package: fyrdrop
           delete-ghost-images: true
           delete-partial-images: true
           delete-orphaned-images: true
