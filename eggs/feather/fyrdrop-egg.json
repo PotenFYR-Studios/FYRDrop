@@ -1,0 +1,65 @@
+{
+  "_comment": "FYRDrop egg for FeatherPanel. Best-effort community format — if your FeatherPanel version rejects it, import the Pterodactyl egg (FeatherPanel supports Pterodactyl egg imports).",
+  "name": "FYRDrop",
+  "uuid": "7f4c1b52-9a0e-4d3a-8f2e-1c6d5a9b3e01",
+  "description": "Self-hosted sharing hub: files, text, image gallery, self-signed certificates, P2P transfer and federation.",
+  "author": "potenfyr-studios@users.noreply.github.com",
+  "tags": ["sharing", "files", "bun"],
+  "docker_images": [
+    {
+      "name": "FYRDrop official (latest)",
+      "image": "ghcr.io/potenfyr-studios/fyrdrop:latest",
+      "description": "Bun runtime with the FYRDrop app and built-in client bundle."
+    }
+  ],
+  "startup": "bun src/server/index.ts",
+  "startup_detect": "FYRDrop is running on",
+  "stop_command": "^C",
+  "file_denylist": [],
+  "install_scripts": [
+    {
+      "name": "prepare data",
+      "script": "#!/bin/bash\nmkdir -p /home/container/data/files /home/container/data/thumbs /home/container/data/certs /home/container/data/uploads_tmp\necho \"FYRDrop data directories ready.\"\nexit 0\n",
+      "docker_image": "busybox:1.36",
+      "entrypoint": "bash"
+    }
+  ],
+  "variables": [
+    {
+      "name": "Max Upload (MB)",
+      "env_variable": "MAX_UPLOAD_MB",
+      "default_value": "512",
+      "description": "Maximum size of a single uploaded file in megabytes.",
+      "required": true,
+      "user_viewable": true,
+      "user_editable": true
+    },
+    {
+      "name": "TLS Enabled",
+      "env_variable": "TLS_ENABLED",
+      "default_value": "auto",
+      "description": "auto = auto-generated self-signed HTTPS cert. 0 = plain HTTP.",
+      "required": true,
+      "user_viewable": true,
+      "user_editable": true
+    },
+    {
+      "name": "TLS Common Name",
+      "env_variable": "TLS_COMMON_NAME",
+      "default_value": "fyrdrop.local",
+      "description": "Common name for the auto-generated TLS certificate.",
+      "required": true,
+      "user_viewable": true,
+      "user_editable": true
+    },
+    {
+      "name": "Session TTL (days)",
+      "env_variable": "SESSION_TTL_DAYS",
+      "default_value": "30",
+      "description": "How long a paired device stays signed in.",
+      "required": true,
+      "user_viewable": true,
+      "user_editable": true
+    }
+  ]
+}

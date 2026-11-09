@@ -1,0 +1,83 @@
+{
+  "_comment": "FYRDrop egg for Pterodactyl Panel 1.x. Uses the official GHCR image — the app and its built client are already inside. Data persists in /home/container/data.",
+  "meta": {
+    "version": "PTDL_v2",
+    "update_url": null
+  },
+  "id": "7f4c1b52-9a0e-4d3a-8f2e-1c6d5a9b3e01",
+  "name": "FYRDrop",
+  "author": "potenfyr-studios@users.noreply.github.com",
+  "description": "Self-hosted sharing hub: files, text, image gallery, self-signed certificates, P2P transfer and federation. PIN-protected, AES-256-GCM encrypted at rest.",
+  "tags": ["sharing", "files", "bun", "react"],
+  "flags": [],
+  "docker_images": {
+    "ghcr.io/potenfyr-studios/fyrdrop:latest": "FYRDrop official image (Bun runtime + app + built client). Pulls latest release."
+  },
+  "file_denylist": [],
+  "startup": {
+    "done": "FYRDrop is running on",
+    "userInteraction": [],
+    "canBeOffline": false,
+    "command": "bun src/server/index.ts"
+  },
+  "config": {
+    "files": {},
+    "startup": {
+      "done": {
+        "mode": "text",
+        "value": "FYRDrop is running on"
+      },
+      "userInteraction": []
+    },
+    "logs": {
+      "custom": false,
+      "location": "logs/latest.log"
+    },
+    "stop": "^C"
+  },
+  "scripts": {
+    "installation": {
+      "script": "#!/bin/bash\n# FYRDrop install: prepare data directory. Everything else ships in the image.\nmkdir -p /home/container/data/files /home/container/data/thumbs /home/container/data/certs /home/container/data/uploads_tmp\necho \"FYRDrop data directories ready.\"\necho \"Open the app once — the first-startup wizard will ask for the instance PIN.\"\nexit 0\n",
+      "container": "busybox:1.36",
+      "entrypoint": "bash"
+    }
+  },
+  "variables": [
+    {
+      "name": "Max Upload (MB)",
+      "description": "Maximum size of a single uploaded file in megabytes. Huge files are still supported via chunked uploads up to this limit.",
+      "env_variable": "MAX_UPLOAD_MB",
+      "default_value": "512",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|numeric|min:1"
+    },
+    {
+      "name": "TLS Enabled",
+      "description": "auto = generate a self-signed cert and serve HTTPS (recommended). Set 0 if you terminate TLS in front of the egg.",
+      "env_variable": "TLS_ENABLED",
+      "default_value": "auto",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string|max:8"
+    },
+    {
+      "name": "TLS Common Name",
+      "description": "Common name for the auto-generated TLS certificate.",
+      "env_variable": "TLS_COMMON_NAME",
+      "default_value": "fyrdrop.local",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string|max:64"
+    },
+    {
+      "name": "Session TTL (days)",
+      "description": "How long a paired device stays signed in.",
+      "env_variable": "SESSION_TTL_DAYS",
+      "default_value": "30",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|numeric|min:1|max:365"
+    }
+  ]
+}

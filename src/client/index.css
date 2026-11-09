@@ -1,0 +1,198 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0b0e14;
+  --color-surface: #12161f;
+  --color-surface2: #181d29;
+  --color-line: #232a3a;
+  --color-accent: #6366f1;
+  --color-accent2: #22d3ee;
+  --color-ok: #34d399;
+  --color-warn: #fbbf24;
+  --color-bad: #f87171;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background:
+    radial-gradient(1200px 800px at 85% -10%, rgba(99, 102, 241, 0.14), transparent 60%),
+    radial-gradient(900px 700px at -10% 110%, rgba(34, 211, 238, 0.1), transparent 55%),
+    #0b0e14;
+  color: #e5e9f2;
+  font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --- scrollbars --- */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a3247;
+  border-radius: 8px;
+  border: 2px solid #0b0e14;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* --- animations --- */
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes popIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+@keyframes glowPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 24px 4px rgba(99, 102, 241, 0.25);
+  }
+}
+
+.anim-page {
+  animation: fadeUp 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.anim-pop {
+  animation: popIn 0.25s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.anim-glow {
+  animation: glowPulse 2.6s ease-in-out infinite;
+}
+
+.glass {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.015));
+  border: 1px solid #232a3a;
+  backdrop-filter: blur(10px);
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #1a2030 25%, #232b40 50%, #1a2030 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 10px;
+}
+
+.hover-lift {
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.hover-lift:hover {
+  transform: translateY(-2px);
+  border-color: #3a4569;
+  box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.7);
+}
+
+code,
+pre,
+.mono {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+/* ---------- Magic UI effects (dependency-free) ---------- */
+
+@property --beam-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.beam-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--beam-angle),
+    transparent 0deg 250deg,
+    var(--beam-from, #6366f1) 300deg,
+    var(--beam-to, #22d3ee) 325deg,
+    transparent 345deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: beamRotate 9s linear infinite;
+}
+
+@keyframes beamRotate {
+  to {
+    --beam-angle: 360deg;
+  }
+}
+
+.shimmer-btn {
+  background:
+    linear-gradient(180deg, #4f46e5, #4338ca) padding-box,
+    linear-gradient(115deg, #6366f1, #22d3ee) border-box;
+  border: 1px solid transparent;
+  box-shadow:
+    0 10px 30px -12px rgba(79, 70, 229, 0.9),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.shimmer-btn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 20%, rgba(255, 255, 255, 0.24) 45%, transparent 70%);
+  transform: translateX(-130%);
+  animation: shimmerSweep 3.8s ease-in-out infinite;
+}
+
+@keyframes shimmerSweep {
+  0%,
+  55% {
+    transform: translateX(-130%);
+  }
+  85%,
+  100% {
+    transform: translateX(130%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .beam-ring,
+  .shimmer-btn::after,
+  .anim-page,
+  .anim-pop,
+  .anim-glow {
+    animation: none !important;
+  }
+}

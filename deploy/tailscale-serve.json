@@ -1,0 +1,13 @@
+{
+  "Autoupdate": true,
+  "Web": {
+    "https": 443,
+    "http": 0,
+    "AllowFunnel": true,
+    "Handlers": [
+      {
+        "Proxy": "http://127.0.0.1:3000"
+      }
+    ]
+  }
+}

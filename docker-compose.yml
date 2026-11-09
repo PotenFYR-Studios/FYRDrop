@@ -1,0 +1,50 @@
+services:
+  fyrdrop:
+    image: ghcr.io/potenfyr-studios/fyrdrop:latest
+    container_name: fyrdrop
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Built-in HTTPS with an auto-generated self-signed cert (recommended).
+      # Set TLS_ENABLED=0 when terminating TLS at a reverse proxy.
+      TLS_ENABLED: "auto"
+      TLS_COMMON_NAME: fyrdrop.local
+      SESSION_TTL_DAYS: "30"
+      MAX_UPLOAD_MB: "512"
+    volumes:
+      - fyrdrop-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Optional: scale out behind a load balancer (app is stateless; share the volume).
+  # fyrdrop-2:
+  #   image: ghcr.io/potenfyr-studios/fyrdrop:latest
+  #   ports: ["3001:3000"]
+  #   volumes: ["fyrdrop-data:/app/data"]
+  #   environment:
+  #     TLS_ENABLED: "0"
+
+volumes:
+  fyrdrop-data:
+
+# Real client addresses and MACs
+#
+# With the default bridge network Docker rewrites the source address, so the app
+# sees the bridge gateway (usually 172.17.0.1) instead of the device's LAN IP.
+# On Linux, host networking gives the app the real address and lets it read the
+# neighbour table, which is what fills in the MAC column:
+#
+#   services:
+#     fyrdrop:
+#       network_mode: host
+#       # remove the "ports:" block when using host networking
+#       environment:
+#         PORT: "3000"
+#
+# If you terminate TLS at a reverse proxy instead, keep the bridge network and
+# set TRUST_PROXY=1 so X-Forwarded-For is honoured (never enable it without a
+# proxy you control). The Devices page marks each address with its source.
