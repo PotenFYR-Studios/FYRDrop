@@ -22,11 +22,13 @@ import { securityHeaders, csrfOriginCheck, ipWhitelist } from "./lib/security";
 import { generateSelfSigned } from "./lib/certs";
 import { startMaintenance, registerSweep, repairLegacyChunkedFiles } from "./lib/maintenance";
 import { backfillAuditV2 } from "./lib/audit";
+import { finalizeOnBoot } from "./lib/update";
 import type { AppEnv } from "./lib/net";
 
 migrate();
 ensureDirs();
 backfillAuditV2();
+finalizeOnBoot();
 const boot = ensureBootstrap();
 
 // --- TLS (MITM protection) -------------------------------------------------

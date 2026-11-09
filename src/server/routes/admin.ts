@@ -11,6 +11,7 @@ import { decryptString } from "../lib/crypto";
 import { getSettings } from "../lib/settings";
 import { clientIp, type AppEnv } from "../lib/net";
 import { audit } from "./users";
+import { currentVersion, updateMode, readPending, latestRelease, stageRelease, cancelStaging, scheduleRestart, history, lastFailure, REPO } from "../lib/update";
 
 export const adminRoutes = new Hono<AppEnv>();
 
@@ -511,4 +512,60 @@ adminRoutes.get("/devices", (c) => {
       accounts: accountIds.size,
     },
   });
+});
+
+/* --------------------------------- Updates -------------------------------- */
+
+adminRoutes.get("/update", (c) => {
+  const mode = updateMode();
+  return c.json({
+    current: currentVersion(),
+    mode,
+    repo: REPO,
+    pending: readPending(),
+    history: history(),
+    lastFailure: lastFailure(),
+    dockerHint: mode === "docker" ? `docker pull ghcr.io/potenfyr-studios/fyrdrop:latest && docker compose up -d` : null,
+  });
+});
+
+adminRoutes.post("/update/check", async (c) => {
+  const { release, error } = await latestRelease(true);
+  const current = currentVersion();
+  return c.json({
+    current,
+    mode: updateMode(),
+    latest: release,
+    error: error ?? null,
+    updateAvailable: !!release && release.version !== current,
+  });
+});
+
+adminRoutes.post("/update/stage", async (c) => {
+  const body = await c.req.json<{ tag?: string }>().catch(() => null);
+  const tag = String(body?.tag ?? "").trim();
+  if (!tag) return c.json({ error: "A release tag is required." }, 400);
+  if (updateMode() === "docker") {
+    return c.json({ error: "This instance runs in Docker. Pull the new image and recreate the container instead." }, 409);
+  }
+  const result = await stageRelease(tag);
+  if (!result.ok) return c.json({ error: result.error ?? "Could not stage the update." }, 500);
+  audit(c, "system.update-staged", true, `Staged update to ${tag}`, { severity: "warn", target: tag, meta: { from: currentVersion(), tag } });
+  return c.json({ ok: true, pending: readPending() });
+});
+
+adminRoutes.post("/update/cancel", (c) => {
+  cancelStaging();
+  audit(c, "system.update-cancelled", true, "Cancelled a staged update", { severity: "warn" });
+  return c.json({ ok: true });
+});
+
+adminRoutes.post("/update/restart", (c) => {
+  const pending = readPending();
+  if (!pending) return c.json({ error: "There is no staged update to apply." }, 400);
+  audit(c, "system.update-restart", true, `Restarting to apply ${pending.to}`, { severity: "warn", target: pending.to });
+  scheduleRestart();
+  // Give the response time to flush, then let the helper take over.
+  setTimeout(() => process.exit(0), 600);
+  return c.json({ ok: true, restarting: true, to: pending.to });
 });

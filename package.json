@@ -1,6 +1,6 @@
 {
   "name": "fyrdrop",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Self-hosted sharing hub: files, text, image gallery and self-signed certificates, protected by a PIN.",
   "module": "src/server/index.ts",
   "type": "module",

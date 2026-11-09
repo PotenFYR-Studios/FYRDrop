@@ -245,6 +245,41 @@ export interface ClusterOverview {
   aggregate: { nodes: number; storageBytes: number; itemCount: number };
 }
 
+
+export interface UpdatePending {
+  from: string;
+  to: string;
+  mode: "git" | "source";
+  tag: string;
+  createdAt: number;
+}
+
+export interface UpdateStatus {
+  current: string;
+  mode: "docker" | "git" | "source";
+  repo: string;
+  pending: UpdatePending | null;
+  history: { from: string; to: string; at: number }[];
+  lastFailure: { at: number; error: string } | null;
+  dockerHint: string | null;
+}
+
+export interface UpdateRelease {
+  tag: string;
+  version: string;
+  notes: string;
+  url: string;
+  publishedAt: string;
+}
+
+export interface UpdateCheck {
+  current: string;
+  mode: "docker" | "git" | "source";
+  latest: UpdateRelease | null;
+  error: string | null;
+  updateAvailable: boolean;
+}
+
 export interface AccessPayload {
   read: { scope: Scope; userIds: string[] };
   write: { scope: Scope; userIds: string[] };
@@ -413,6 +448,13 @@ export const api = {
 
   // overview (all signed-in users)
   overview: () => req<any>("/api/overview"),
+
+  // updates (owner)
+  updateStatus: () => req<UpdateStatus>("/api/admin/update"),
+  updateCheck: () => req<UpdateCheck>("/api/admin/update/check", post()),
+  updateStage: (tag: string) => req<{ ok: boolean; pending: UpdatePending }>("/api/admin/update/stage", post({ tag })),
+  updateCancel: () => req("/api/admin/update/cancel", post()),
+  updateRestart: () => req<{ ok: boolean; restarting: boolean; to: string }>("/api/admin/update/restart", post()),
 
   // cluster (owner)
   cluster: () => req<ClusterOverview>("/api/cluster"),

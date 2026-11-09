@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, timeAgo } from "../../api";
 import { Icon } from "../../icons";
-import { Badge, Btn, Card, Empty, Input, Label, PageHeader, useToast, useSync } from "../../ui";
+import { Badge, Btn, Card, Empty, Input, Label, Modal, PageHeader, Spinner, useToast, useSync } from "../../ui";
+import type { UpdateCheck, UpdateStatus } from "../../api";
 
 type Peer = {
   id: string;
@@ -279,6 +280,231 @@ export default function AdminSettings() {
           </ul>
         )}
       </Card>
+      <UpdateCard />
     </div>
+  );
+}
+
+/* -------------------------------- Updates --------------------------------- */
+
+function UpdateCard() {
+  const { push } = useToast();
+  const [status, setStatus] = useState<UpdateStatus | null>(null);
+  const [check, setCheck] = useState<UpdateCheck | null>(null);
+  const [busy, setBusy] = useState<"check" | "stage" | "restart" | "cancel" | null>(null);
+  const [restarting, setRestarting] = useState(false);
+  const [showNotes, setShowNotes] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setStatus(await api.updateStatus());
+    } catch (e: any) {
+      push("err", e?.message ?? "Could not read the update state");
+    }
+  }, [push]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const runCheck = async () => {
+    setBusy("check");
+    try {
+      const res = await api.updateCheck();
+      setCheck(res);
+      if (res.error) push("err", res.error);
+      else if (res.latest) push(res.updateAvailable ? "ok" : "info", res.updateAvailable ? `Version ${res.latest.version} is available` : "You are on the newest release");
+      else push("info", `${res.current} is the latest published version`);
+      await load();
+    } catch (e: any) {
+      push("err", e?.message ?? "Update check failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const stage = async (tag: string) => {
+    setBusy("stage");
+    try {
+      await api.updateStage(tag);
+      push("ok", "Release staged. A restart is required.");
+      await load();
+    } catch (e: any) {
+      push("err", e?.message ?? "Could not stage the update");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const cancel = async () => {
+    setBusy("cancel");
+    try {
+      await api.updateCancel();
+      push("ok", "Staged update discarded");
+      await load();
+    } catch (e: any) {
+      push("err", e?.message ?? "Could not cancel");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const restart = async () => {
+    setBusy("restart");
+    setRestarting(true);
+    try {
+      await api.updateRestart();
+    } catch {
+      /* the server is going down; expected */
+    }
+    const started = Date.now();
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch("/health", { cache: "no-store" });
+        if (res.ok) {
+          clearInterval(timer);
+          window.location.reload();
+        }
+      } catch {
+        /* still restarting */
+      }
+      if (Date.now() - started > 90_000) {
+        clearInterval(timer);
+        setRestarting(false);
+        setBusy(null);
+      }
+    }, 1500);
+  };
+
+  const pending = status?.pending ?? null;
+
+  return (
+    <>
+      <Card className="mt-4 p-5">
+        <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-white">
+          <Icon name="download" size={15} className="text-indigo-300" /> Software update
+          {status && <Badge tone="info">v{status.current}</Badge>}
+          {status?.mode === "docker" && <Badge tone="default">docker</Badge>}
+        </h2>
+        <p className="mb-3 text-xs text-slate-500">
+          Checks the public GitHub repository, stages the release, then asks for a restart. Nothing changes until you restart.
+        </p>
+
+        {status?.mode === "docker" && (
+          <div className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/[0.07] p-3 text-[11px] leading-relaxed text-amber-200/90">
+            This instance runs in Docker. Update by pulling the new image and recreating the container:
+            <pre className="mono mt-1.5 whitespace-pre-wrap break-all text-[11px] text-amber-100">{status.dockerHint}</pre>
+          </div>
+        )}
+
+        {status?.lastFailure && (
+          <div className="mb-3 rounded-xl border border-red-500/30 bg-red-500/[0.07] p-3 text-[11px] text-red-200/90">
+            Last update failed: {status.lastFailure.error}
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Btn size="sm" variant="soft" onClick={() => void runCheck()} disabled={busy !== null}>
+            {busy === "check" ? <Spinner size={13} /> : <Icon name="refresh" size={13} />} Check for updates
+          </Btn>
+          {status && status.mode !== "docker" && (
+            <span className="text-[11px] text-slate-500">
+              {status.mode === "git" ? "Git checkout: updates fetch the tag and rebuild in place." : "Folder install: the release is built in a staging folder and swapped on restart."}
+            </span>
+          )}
+        </div>
+
+        {check && (
+          <div className="mt-3 rounded-xl border border-[#232a3a] bg-[#12161f] p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-slate-300">
+                Current {check.current}
+                {check.latest ? ` · latest ${check.latest.version}` : " · no release published yet"}
+              </span>
+              {check.latest && check.updateAvailable && status?.mode !== "docker" && !pending && (
+                <Btn size="sm" className="ml-auto" onClick={() => void stage(check.latest!.tag)} disabled={busy !== null}>
+                  {busy === "stage" ? <Spinner size={13} /> : <Icon name="download" size={13} />} Update to {check.latest.version}
+                </Btn>
+              )}
+              {check.latest && !check.updateAvailable && <Badge tone="ok">up to date</Badge>}
+            </div>
+            {check.latest?.notes && (
+              <>
+                <button onClick={() => setShowNotes((v) => !v)} className="mt-2 text-[11px] text-indigo-300 hover:text-indigo-200">
+                  {showNotes ? "Hide release notes" : "Release notes"}
+                </button>
+                {showNotes && (
+                  <pre className="mono mt-1.5 max-h-44 overflow-y-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed text-slate-400">{check.latest.notes}</pre>
+                )}
+              </>
+            )}
+            {check.latest?.url && (
+              <a href={check.latest.url} target="_blank" rel="noreferrer" className="mt-2 inline-block text-[11px] text-slate-500 hover:text-slate-300">
+                Open on GitHub
+              </a>
+            )}
+          </div>
+        )}
+
+        {pending && (
+          <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/[0.08] p-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-amber-100">
+              <Icon name="alert" size={14} />
+              <span>
+                Version {pending.to} is staged. Restart is mandatory to finish the update.
+              </span>
+              <div className="ml-auto flex gap-2">
+                <Btn size="sm" variant="ghost" onClick={() => void cancel()} disabled={busy !== null}>
+                  Discard
+                </Btn>
+                <Btn size="sm" onClick={() => void restart()} disabled={busy !== null}>
+                  {busy === "restart" || restarting ? <Spinner size={13} /> : <Icon name="power" size={13} />} Restart now
+                </Btn>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {status && status.history.length > 0 && (
+          <div className="mt-3">
+            <div className="mb-1 text-[11px] uppercase tracking-wide text-slate-500">Update history</div>
+            <ul className="space-y-1 text-[11px] text-slate-400">
+              {status.history.slice(0, 5).map((h, i) => (
+                <li key={i} className="mono">
+                  {h.from} → {h.to} <span className="text-slate-600">· {timeAgo(h.at)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </Card>
+
+      <Modal
+        open={!!pending && !restarting && busy !== "restart"}
+        onClose={() => {}}
+        title={pending ? `Restart required for ${pending.to}` : "Restart required"}
+      >
+        {pending && (
+          <div className="space-y-3">
+            <p className="text-sm text-slate-300">
+              The new version is staged. FYRDrop has to restart before it runs. Until then this instance keeps serving{" "}
+              {pending.from}.
+            </p>
+            <p className="text-xs text-slate-500">
+              The restart helper starts the new process, deletes the previous tree, staging folders and downloaded archives, then
+              the page reconnects on its own.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Btn variant="ghost" onClick={() => void cancel()} disabled={busy !== null}>
+                Discard update
+              </Btn>
+              <Btn onClick={() => void restart()} disabled={busy !== null}>
+                {busy === "restart" ? <Spinner size={14} /> : <Icon name="power" size={14} />} Restart and finish
+              </Btn>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </>
   );
 }
