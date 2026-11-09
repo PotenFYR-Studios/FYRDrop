@@ -4,6 +4,96 @@ import { Btn, Card, Empty, Input, ItemMeta, Label, PageHeader, Spinner, Textarea
 import { Icon } from "../icons";
 import { AccessChips, AccessDialog, AccessPicker, defaultAccess, toPayload, type AccessState } from "../components/Access";
 
+
+/* --------------------------- Import / export --------------------------- */
+
+const escapeHtml = (v: string) =>
+  v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+function saveBlob(name: string, mime: string, data: string | Blob) {
+  const blob = data instanceof Blob ? data : new Blob([data], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+const safeName = (name: string) => name.replace(/[\\/:*?"<>|]+/g, "-").trim().slice(0, 80) || "note";
+
+function noteHtml(title: string, body: string) {
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
+<style>
+  body{font:16px/1.7 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:760px;margin:48px auto;padding:0 20px;color:#111}
+  h1{font-size:28px;line-height:1.3;margin:0 0 24px;padding-bottom:12px;border-bottom:1px solid #ddd}
+  pre{white-space:pre-wrap;word-wrap:break-word;font:inherit;margin:0}
+</style></head>
+<body><h1>${escapeHtml(title)}</h1><pre>${escapeHtml(body)}</pre></body></html>`;
+}
+
+function stripHtml(html: string) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  doc.querySelectorAll("script,style,noscript").forEach((n) => n.remove());
+  return (doc.body?.innerText ?? "").trim();
+}
+
+function stripRtf(rtf: string) {
+  return rtf
+    .replace(/\\'([0-9a-f]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\par[d]?/gi, "\n")
+    .replace(/\\[a-z]+-?\d* ?/gi, "")
+    .replace(/[{}]/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** Extract word/document.xml from a .docx (a zip) without extra dependencies. */
+async function docxText(buf: ArrayBuffer): Promise<string> {
+  const bytes = new Uint8Array(buf);
+  const view = new DataView(buf);
+  let offset = 0;
+  while (offset + 30 < bytes.length) {
+    if (view.getUint32(offset, true) !== 0x04034b50) break;
+    const method = view.getUint16(offset + 8, true);
+    const compSize = view.getUint32(offset + 18, true);
+    const nameLen = view.getUint16(offset + 26, true);
+    const extraLen = view.getUint16(offset + 28, true);
+    const name = new TextDecoder().decode(bytes.subarray(offset + 30, offset + 30 + nameLen));
+    const dataStart = offset + 30 + nameLen + extraLen;
+    const data = bytes.subarray(dataStart, dataStart + compSize);
+    if (name === "word/document.xml") {
+      let xml: string;
+      if (method === 0) xml = new TextDecoder().decode(data);
+      else if (method === 8 && typeof DecompressionStream !== "undefined") {
+        const stream = new Blob([data as unknown as BlobPart]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+        xml = await new Response(stream).text();
+      } else throw new Error("Unsupported docx compression");
+      return xml
+        .replace(/<w:tab[^>]*\/>/gi, "\t")
+        .replace(/<w:br[^>]*\/>/gi, "\n")
+        .replace(/<\/w:p>/gi, "\n")
+        .replace(/<[^>]+>/g, "")
+        .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+    }
+    offset = dataStart + compSize;
+  }
+  throw new Error("No word/document.xml found");
+}
+
+async function extractDocument(file: File): Promise<string> {
+  const ext = (file.name.split(".").pop() ?? "").toLowerCase();
+  if (ext === "docx") return docxText(await file.arrayBuffer());
+  if (ext === "pdf") throw new Error("PDF import is not supported yet. Copy the text, or export notes as PDF instead.");
+  const raw = await file.text();
+  if (["html", "htm"].includes(ext)) return stripHtml(raw);
+  if (ext === "rtf") return stripRtf(raw);
+  return raw;
+}
+
 export default function Notepad() {
   const { push } = useToast();
   const [loading, setLoading] = useState(true);
@@ -17,6 +107,56 @@ export default function Notepad() {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [access, setAccess] = useState<AccessState>(defaultAccess());
   const [accessItem, setAccessItem] = useState<Item | null>(null);
+  const [importing, setImporting] = useState(false);
+
+  const importDocument = async (file: File) => {
+    setImporting(true);
+    try {
+      const text = await extractDocument(file);
+      if (!text.trim()) throw new Error("That document had no readable text.");
+      setTitle((t) => t.trim() || file.name.replace(/\.[^.]+$/, ""));
+      setContent(text);
+      push("ok", `${file.name} loaded into the editor`);
+    } catch (e: any) {
+      push("err", e?.message ?? "Could not read that document");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const noteContent = async (n: Item) => {
+    if (full[n.id] !== undefined) return full[n.id]!;
+    const res = await fetch(`/api/items/${n.id}/preview`, { credentials: "include" });
+    if (!res.ok) throw new Error("Could not read this note");
+    const text = await res.text();
+    setFull((f) => ({ ...f, [n.id]: text }));
+    return text;
+  };
+
+  const exportNote = async (n: Item, format: "txt" | "md" | "html" | "doc" | "pdf") => {
+    try {
+      const body = await noteContent(n);
+      const base = safeName(n.name);
+      if (format === "txt") saveBlob(`${base}.txt`, "text/plain;charset=utf-8", body);
+      else if (format === "md") saveBlob(`${base}.md`, "text/markdown;charset=utf-8", `# ${n.name}
+
+${body}
+`);
+      else if (format === "html") saveBlob(`${base}.html`, "text/html;charset=utf-8", noteHtml(n.name, body));
+      else if (format === "doc") saveBlob(`${base}.doc`, "application/msword;charset=utf-8", noteHtml(n.name, body));
+      else {
+        const win = window.open("", "_blank", "width=820,height=900");
+        if (!win) throw new Error("Allow pop-ups to print this note as PDF");
+        win.document.write(noteHtml(n.name, body));
+        win.document.close();
+        win.focus();
+        setTimeout(() => win.print(), 350);
+      }
+      push("ok", format === "pdf" ? "Print dialog opened - choose Save as PDF" : `Exported ${base}.${format === "doc" ? "doc" : format}`);
+    } catch (e: any) {
+      push("err", e?.message ?? "Export failed");
+    }
+  };
 
   const reload = useCallback(async () => {
     try {
@@ -110,9 +250,24 @@ export default function Notepad() {
 
       <Card className="mb-6 p-5">
         <div className="space-y-4">
-          <div>
-            <Label>Title</Label>
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Untitled note" maxLength={120} />
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-[12rem] flex-1">
+              <Label>Title</Label>
+              <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Untitled note" maxLength={120} />
+            </div>
+            <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-[#2a3247] px-3 py-2 text-xs text-slate-300 transition hover:text-white ${importing ? "opacity-60" : ""}`}>
+              <Icon name="upload" size={13} /> {importing ? "Reading…" : "Import document"}
+              <input
+                type="file"
+                className="hidden"
+                accept=".txt,.md,.markdown,.html,.htm,.csv,.json,.xml,.log,.rtf,.docx,.pdf"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void importDocument(f);
+                  e.target.value = "";
+                }}
+              />
+            </label>
           </div>
           <div>
             <Label>Content</Label>
@@ -174,6 +329,7 @@ export default function Notepad() {
                     </div>
                   </button>
                   <div className="flex shrink-0 items-center gap-1.5 opacity-80 transition group-hover:opacity-100">
+                    <ExportMenu onPick={(fmt) => void exportNote(n, fmt)} />
                     {n.canManage && (
                       <Btn size="sm" variant="soft" onClick={() => setAccessItem(n)}>
                         <Icon name="shield" size={14} /> Access
@@ -241,5 +397,30 @@ export default function Notepad() {
         onSaved={(updated) => setNotes((list) => list.map((x) => (x.id === updated.id ? updated : x)))}
       />
     </div>
+  );
+}
+
+function ExportMenu({ onPick }: { onPick: (f: "txt" | "md" | "html" | "doc" | "pdf") => void }) {
+  return (
+    <details className="relative">
+      <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded-lg border border-[#2a3247] bg-white/[0.04] px-2.5 py-1.5 text-xs text-slate-300 transition hover:text-white">
+        <Icon name="download" size={13} /> Export
+      </summary>
+      <div className="absolute right-0 z-20 mt-1 w-40 overflow-hidden rounded-xl border border-[#2a3247] bg-[#0d1119] shadow-2xl">
+        {(
+          [
+            ["txt", "Plain text"],
+            ["md", "Markdown"],
+            ["html", "HTML"],
+            ["doc", "Word document"],
+            ["pdf", "PDF (print)"],
+          ] as const
+        ).map(([key, label]) => (
+          <button key={key} onClick={() => onPick(key)} className="block w-full px-3 py-2 text-left text-xs text-slate-300 transition hover:bg-white/[0.06] hover:text-white">
+            {label}
+          </button>
+        ))}
+      </div>
+    </details>
   );
 }

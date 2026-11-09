@@ -163,24 +163,26 @@ export function Badge({ children, tone = "default" }: { children: ReactNode; ton
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: ReactNode }) {
   return (
-    <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-      <div>
+    <div className="mb-6 flex flex-wrap items-end justify-between gap-3 border-b border-[#1b2230] pb-4">
+      <div className="min-w-0">
         <h1 className="text-2xl font-semibold tracking-tight text-white">{title}</h1>
         {subtitle && <p className="mt-1 text-sm text-slate-400">{subtitle}</p>}
       </div>
-      {actions && <div className="flex gap-2">{actions}</div>}
+      {actions && <div className="flex shrink-0 gap-2">{actions}</div>}
     </div>
   );
 }
 
 export function Empty({ icon = "folder", title, hint }: { icon?: IconName; title: string; hint?: string }) {
   return (
-    <div className="anim-pop flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-[#2a3247] py-14 text-center">
-      <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-[#2a3247] bg-white/[0.03] text-slate-500">
-        <Icon name={icon} size={26} />
+    <div className="anim-pop flex items-center gap-4 rounded-2xl border border-dashed border-[#2a3247] px-5 py-7">
+      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-[#2a3247] bg-white/[0.03] text-slate-500">
+        <Icon name={icon} size={22} />
       </div>
-      <div className="font-medium text-slate-300">{title}</div>
-      {hint && <div className="max-w-sm text-sm text-slate-500">{hint}</div>}
+      <div className="min-w-0">
+        <div className="font-medium text-slate-300">{title}</div>
+        {hint && <div className="mt-0.5 text-sm text-slate-500">{hint}</div>}
+      </div>
     </div>
   );
 }

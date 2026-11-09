@@ -166,20 +166,27 @@ export default function Groups() {
       <Modal open={detail !== null} onClose={() => setDetail(null)} title={detail ? detail.group.name : "Group"} wide>
         {detail && (
           <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
-              <span>{detail.group.itemCount} items</span>
-              <span className="text-slate-600">·</span>
-              <span>{detail.members.length} members</span>
-              <span className="text-slate-600">·</span>
-              <span>created {timeAgo(detail.group.createdAt)}</span>
-              <Btn size="sm" variant="soft" href={`/files?group=${detail.group.id}`} className="ml-auto">
+            <div className="flex flex-wrap items-start gap-3 rounded-xl border border-[#232a3a] bg-[#12161f] p-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border" style={{ borderColor: detail.group.color + "55", background: detail.group.color + "18", color: detail.group.color }}>
+                <Icon name="users" size={18} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="truncate text-sm font-medium text-white">{detail.group.name}</span>
+                  {detail.group.isDefault && <Badge tone="default">default</Badge>}
+                </div>
+                <div className="mt-0.5 text-[11px] text-slate-500">
+                  {detail.group.description || "No description"} · {detail.group.itemCount} items · {detail.members.length} members · created {timeAgo(detail.group.createdAt)}
+                </div>
+              </div>
+              <Btn size="sm" variant="soft" href={`/files?group=${detail.group.id}`}>
                 <Icon name="folder" size={13} /> Open files
               </Btn>
             </div>
 
             <div>
               <Label>Members</Label>
-              <div className="divide-y divide-[#161c28] rounded-xl border border-[#232a3a] bg-[#12161f]">
+              <div className="max-h-64 divide-y divide-[#161c28] overflow-y-auto rounded-xl border border-[#232a3a] bg-[#12161f]">
                 {detail.members.map((m) => (
                   <div key={m.userId} className="flex items-center gap-2 px-3 py-2">
                     {m.user ? <Avatar user={m.user} size={24} /> : <span className="h-6 w-6 rounded-full bg-white/10" />}

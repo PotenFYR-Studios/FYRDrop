@@ -13,6 +13,13 @@ function typeIcon(item: Item): IconName {
   return mimeIcon(item.mime, item.name);
 }
 
+function itemHref(it: Item): string {
+  if (it.type === "image") return "/gallery";
+  if (it.type === "text") return "/notepad";
+  if (it.type === "url") return "/links";
+  return "/files";
+}
+
 export default function Dashboard() {
   const { push } = useToast();
   const { user } = useAuth();
@@ -86,7 +93,7 @@ export default function Dashboard() {
                 {pinned.map((p) => (
                   <Card key={p.id} className="group p-4">
                     <div className="flex items-start justify-between gap-2">
-                      <div className="flex min-w-0 items-center gap-2.5">
+                      <Link to={itemHref(p)} className="flex min-w-0 flex-1 items-center gap-2.5 transition hover:opacity-90">
                         <span className="shrink-0 text-slate-400">
                           <Icon name={typeIcon(p)} size={20} />
                         </span>
@@ -99,7 +106,7 @@ export default function Dashboard() {
                             <span>{p.downloads}</span>
                           </div>
                         </div>
-                      </div>
+                      </Link>
                       <button
                         onClick={() => void togglePin(p)}
                         title={p.pinned ? "Unpin" : "Pin"}
@@ -138,7 +145,7 @@ export default function Dashboard() {
             ) : (
               <Card className="divide-y divide-[#1c2334] overflow-hidden">
                 {recent.map((it) => (
-                  <div key={it.id} className="flex items-center gap-3 p-4 transition hover:bg-white/[0.03]">
+                  <Link key={it.id} to={itemHref(it)} className="flex items-center gap-3 p-4 transition hover:bg-white/[0.03]">
                     <span className="shrink-0 text-slate-500">
                       <Icon name={typeIcon(it)} size={20} />
                     </span>
@@ -152,7 +159,7 @@ export default function Dashboard() {
                         pinned
                       </Badge>
                     ) : null}
-                  </div>
+                  </Link>
                 ))}
               </Card>
             )}

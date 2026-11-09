@@ -190,8 +190,8 @@ export default function Files() {
       <PageHeader title="Files" subtitle="Upload, paste or drop files. Set who can access them before they go up." />
 
       <Card
-        className={`mb-6 border-2 border-dashed p-8 text-center transition-all duration-200 ${
-          dragging ? "scale-[1.01] border-indigo-500 bg-indigo-500/10" : "border-[#2a3247] hover:border-indigo-500/50"
+        className={`mb-5 border-2 border-dashed p-5 transition-all duration-200 sm:p-6 ${
+          dragging ? "border-indigo-500 bg-indigo-500/10" : "border-[#2a3247] hover:border-indigo-500/50"
         }`}
         onClick={() => inputRef.current?.click()}
         onDragOver={onDragOver}
@@ -209,57 +209,58 @@ export default function Files() {
             e.target.value = "";
           }}
         />
-        <div className="flex justify-center">
-          <Icon name="upload" size={30} className={dragging ? "text-indigo-400" : "text-slate-500"} />
-        </div>
-        <div className="mt-2 font-medium text-white">{dragging ? "Release to upload" : "Drag & drop, paste, or click to browse"}</div>
-        <div className="mt-1 text-sm text-slate-500">Multiple files · Ctrl+V works on this page</div>
-        <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-          <span className="text-xs uppercase tracking-wide text-slate-500">Expires in</span>
-          {[0, 1, 7, 30].map((d) => (
-            <button
-              key={d}
-              onClick={(e) => {
-                e.stopPropagation();
-                setExpiresDays(d);
-              }}
-              className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
-                expiresDays === d
-                  ? "border-indigo-500 bg-indigo-500/20 text-white"
-                  : "border-[#2a3247] text-slate-400 hover:border-indigo-500/50 hover:text-slate-200"
-              }`}
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border ${dragging ? "border-indigo-500/50 bg-indigo-500/15 text-indigo-300" : "border-[#2a3247] bg-white/[0.03] text-slate-400"}`}>
+              <Icon name="upload" size={20} />
+            </span>
+            <div className="min-w-0">
+              <div className="font-medium text-white">{dragging ? "Release to upload" : "Drag and drop, paste, or click to browse"}</div>
+              <div className="mt-0.5 text-xs text-slate-500">Multiple files · Ctrl+V works on this page · choose a group before uploading</div>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-1 rounded-xl border border-[#2a3247] bg-[#12161f] p-1">
+              <span className="px-2 text-[10px] uppercase tracking-wide text-slate-500">Expires</span>
+              {[0, 1, 7, 30].map((d) => (
+                <button
+                  key={d}
+                  onClick={() => setExpiresDays(d)}
+                  className={`rounded-lg px-2 py-1 text-[11px] font-medium transition ${
+                    expiresDays === d ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  {d === 0 ? "Never" : `${d}d`}
+                </button>
+              ))}
+            </div>
+            <select
+              value={groupId}
+              onChange={(e) => setGroupId(e.target.value)}
+              className="h-8 rounded-lg border border-[#2a3247] bg-[#12161f] px-2 text-xs text-slate-200 outline-none focus:border-indigo-500"
+              aria-label="Group"
             >
-              {d === 0 ? "Never" : `${d}d`}
-            </button>
-          ))}
-        </div>
-        <div className="mt-4 flex flex-wrap items-center justify-center gap-2" onClick={(e) => e.stopPropagation()}>
-          <select
-            value={groupId}
-            onChange={(e) => setGroupId(e.target.value)}
-            className="rounded-lg border border-[#2a3247] bg-[#12161f] px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-500"
-            aria-label="Group"
-          >
-            <option value="">Default group</option>
-            {groups.map((g) => (
-              <option key={g.id} value={g.id}>{g.name}</option>
-            ))}
-          </select>
-          <input
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            placeholder="Category"
-            maxLength={60}
-            className="w-28 rounded-lg border border-[#2a3247] bg-[#12161f] px-2.5 py-1.5 text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-indigo-500"
-            aria-label="Category"
-          />
-          <input
-            value={labels}
-            onChange={(e) => setLabels(e.target.value)}
-            placeholder="labels, comma separated"
-            className="w-44 rounded-lg border border-[#2a3247] bg-[#12161f] px-2.5 py-1.5 text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-indigo-500"
-            aria-label="Labels"
-          />
+              <option value="">Default group</option>
+              {groups.map((g) => (
+                <option key={g.id} value={g.id}>{g.name}</option>
+              ))}
+            </select>
+            <input
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              placeholder="Category"
+              maxLength={60}
+              className="h-8 w-24 rounded-lg border border-[#2a3247] bg-[#12161f] px-2 text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-indigo-500"
+              aria-label="Category"
+            />
+            <input
+              value={labels}
+              onChange={(e) => setLabels(e.target.value)}
+              placeholder="labels, comma separated"
+              className="h-8 w-44 rounded-lg border border-[#2a3247] bg-[#12161f] px-2 text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-indigo-500"
+              aria-label="Labels"
+            />
+          </div>
         </div>
       </Card>
 
@@ -288,7 +289,7 @@ export default function Files() {
         </Card>
       )}
 
-      <div className="mb-4 flex gap-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         {tabs.map((t) => (
           <button
             key={t.key}
@@ -302,6 +303,10 @@ export default function Files() {
             {t.label}
           </button>
         ))}
+        <span className="ml-auto text-[11px] text-slate-500">
+          {visible.length} {visible.length === 1 ? "item" : "items"}
+          {visible.length > 0 ? ` · ${humanSize(visible.reduce((n, i) => n + i.size, 0))}` : ""}
+        </span>
       </div>
 
       {loading ? (
