@@ -8,11 +8,38 @@
     <meta name="referrer" content="same-origin" />
     <title>FYRDrop</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-      <link rel="manifest" href="/manifest.webmanifest" />
-    <meta name="theme-color" content="#0b0e14" />
+    <link rel="manifest" href="/manifest.webmanifest" />
   </head>
-  <body>
+  <body style="margin:0;background:#0b0e14;color:#e2e8f0;font:15px/1.6 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
     <div id="root"></div>
     <script type="module" src="/main.tsx"></script>
+    <script>
+      // Never leave a blank page: if the bundle fails to load or React never
+      // mounts (stale asset after an update, blocked script, runtime crash),
+      // show a recovery card with a cache-busting reload.
+      (function () {
+        var done = false;
+        window.__fyrdropBooted = function () { done = true; };
+        function recovery(detail) {
+          if (done) return;
+          var root = document.getElementById("root");
+          if (!root || root.childElementCount > 0) return;
+          root.innerHTML =
+            '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px">' +
+            '<div style="max-width:460px;border:1px solid #2a3247;border-radius:16px;background:#0d1119;padding:24px">' +
+            '<div style="font-size:18px;font-weight:600;color:#fff;margin-bottom:8px">FYRDrop could not start</div>' +
+            '<div style="font-size:13px;color:#94a3b8;margin-bottom:16px">The page loaded but the app did not. This is usually a stale file from a recent update.</div>' +
+            '<pre style="white-space:pre-wrap;word-break:break-word;font-size:11px;color:#64748b;margin:0 0 16px">' +
+            String(detail || "no detail").replace(/[<>&]/g, function (c) { return ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c]; }) +
+            "</pre>" +
+            '<button onclick="location.replace(location.pathname+\'?reload=\'+Date.now())" style="background:#4f46e5;color:#fff;border:0;border-radius:10px;padding:10px 16px;font-size:13px;cursor:pointer">Reload</button>' +
+            '<button onclick="(async()=>{try{if(window.caches){for(const k of await caches.keys())await caches.delete(k)}if(navigator.serviceWorker){for(const r of await navigator.serviceWorker.getRegistrations())await r.unregister()}}catch(e){}location.replace(location.pathname+\'?fresh=\'+Date.now())})()" style="background:transparent;color:#c7d2fe;border:1px solid #2a3247;border-radius:10px;padding:10px 16px;font-size:13px;cursor:pointer;margin-left:8px">Clear cache and reload</button>' +
+            "</div></div>";
+        }
+        setTimeout(function () { recovery("The app did not mount within 5 seconds."); }, 5000);
+        window.addEventListener("error", function (e) { if (!done) recovery(e.message || "Script error"); }, true);
+        window.addEventListener("unhandledrejection", function (e) { if (!done) recovery(String((e.reason && e.reason.message) || e.reason)); });
+      })();
+    </script>
   </body>
 </html>
