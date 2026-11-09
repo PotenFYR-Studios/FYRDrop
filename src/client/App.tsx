@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, NavLink, useLocation } from "re
 import { api, onAuthLost, type Status, type UserProfile } from "./api";
 import { Avatar, Badge, Btn, LiveIndicator, Spinner, ToastProvider, useSync, useSyncStatus } from "./ui";
 import { Icon, Logo, type IconName } from "./icons";
+import CommandPalette from "./components/CommandPalette";
 import { BlurFade, DotPattern } from "./components/magic";
 import { resetSync } from "./sync";
 import Login from "./pages/Login";
@@ -176,6 +177,14 @@ function Shell({ children }: { children: ReactNode }) {
             <div className="text-[10px] uppercase tracking-widest text-slate-500">secure share hub</div>
           </div>
         </div>
+        <button
+          onClick={() => window.dispatchEvent(new Event("fyrdrop:search"))}
+          className="mb-3 flex items-center gap-2 rounded-xl border border-[#2a3247] bg-white/[0.02] px-3 py-2 text-xs text-slate-400 transition hover:border-indigo-500/40 hover:text-slate-200"
+        >
+          <Icon name="search" size={14} />
+          <span className="flex-1 text-left">Search</span>
+          <kbd className="rounded border border-[#2a3247] px-1 py-0.5 text-[9px]">Ctrl K</kbd>
+        </button>
         <nav className="space-y-0.5">
           {NAV.map((n) => (
             <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => navClass(isActive)}>
@@ -396,6 +405,7 @@ function Root() {
   return (
     <AuthCtx.Provider value={ctx}>
       <BrowserRouter>
+        <CommandPalette />
         <Routes>
           {["/s/:token", "/q/:token"].map((path) => (
             <Route

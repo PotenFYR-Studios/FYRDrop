@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 import { db, dirs } from "../db";
-import { items, shareLinks, userPins, clusterNodes } from "../db/schema";
+import { items, shareLinks, userPins, clusterNodes, groups, groupMembers } from "../db/schema";
 import { makeThumbnail, makeThumbnailFromBuffer, deleteThumb, thumbPath } from "../lib/thumbs";
 import { storedFileName } from "../lib/files";
 import { requireSession, type SessionCtx } from "../lib/auth";
@@ -211,6 +211,43 @@ itemRoutes.get("/", (c) => {
   return c.json({
     items: filtered.map((r) => serialize(r, session, { withContent: r.type === "text" || r.type === "url", pins })),
   });
+});
+
+/** Global search across everything the caller can read. */
+itemRoutes.get("/search", (c) => {
+  const session = c.get("session");
+  const me = session.user;
+  if (!me) return c.json({ error: "Sign in first." }, 401);
+  const q = (c.req.query("q") ?? "").trim().toLowerCase().slice(0, 80);
+  if (q.length < 2) return c.json({ items: [], groups: [] });
+  const now = Date.now();
+  const rows = db
+    .select()
+    .from(items)
+    .where(and(isNull(items.deletedAt), or(isNull(items.expiresAt), gt(items.expiresAt, now))))
+    .all();
+  const hits: any[] = [];
+  for (const r of rows) {
+    if (!visibleTo(r, session)) continue;
+    let match = [r.name, r.category, r.labels].some((v) => v && v.toLowerCase().includes(q));
+    if (!match && (r.type === "text" || r.type === "url") && r.content) {
+      try {
+        match = decryptString(r.content).toLowerCase().includes(q);
+      } catch {
+        match = false;
+      }
+    }
+    if (match) hits.push({ id: r.id, name: r.name, type: r.type, mime: r.mime, category: r.category, labels: r.labels, groupId: r.groupId });
+    if (hits.length >= 40) break;
+  }
+  const groupRows = db
+    .select()
+    .from(groups)
+    .all()
+    .filter((g) => g.name.toLowerCase().includes(q) && (g.ownerId === me.id || !!db.select().from(groupMembers).where(and(eq(groupMembers.groupId, g.id), eq(groupMembers.userId, me.id))).limit(1).get()))
+    .slice(0, 10)
+    .map((g) => ({ id: g.id, name: g.name }));
+  return c.json({ items: hits, groups: groupRows });
 });
 
 /** The signed-in user's quick links. */

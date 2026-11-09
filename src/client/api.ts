@@ -528,6 +528,7 @@ export const api = {
   remoteItems: () => req<{ items: RemoteItem[] }>("/api/remote/items"),
 
   // groups
+  search: (q: string) => req<{ items: { id: string; name: string; type: string; mime: string; category: string; labels: string; groupId: string }[]; groups: { id: string; name: string }[] }>(`/api/items/search?q=${encodeURIComponent(q)}`),
   trash: () => req<{ items: Item[] }>("/api/items/trash/list"),
   restoreItem: (id: string) => req<{ ok: boolean }>(`/api/items/${id}/restore`, post()),
   purgeItem: (id: string) => req<{ ok: boolean }>(`/api/items/${id}/purge`, { method: "DELETE" }),

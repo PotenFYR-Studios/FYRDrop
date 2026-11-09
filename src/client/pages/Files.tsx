@@ -27,6 +27,7 @@ export default function Files() {
   const [metaCategory, setMetaCategory] = useState("");
   const [metaLabels, setMetaLabels] = useState("");
   const [metaBusy, setMetaBusy] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [groups, setGroups] = useState<GroupSummary[]>([]);
   const [groupId, setGroupId] = useState("");
   const [category, setCategory] = useState("");
@@ -138,6 +139,43 @@ export default function Files() {
     } catch (e: any) {
       push("err", e?.message ?? "Could not place a copy");
     }
+  };
+
+  const toggleSel = (id: string) =>
+    setSelected((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+
+  const bulkDelete = async () => {
+    if (selected.size === 0) return;
+    if (!window.confirm(`Move ${selected.size} item(s) to trash? They stay recoverable for 30 days.`)) return;
+    for (const id of selected) {
+      try {
+        await api.deleteItem(id);
+      } catch {
+        /* keep going */
+      }
+    }
+    push("ok", `${selected.size} item(s) moved to trash`);
+    setSelected(new Set());
+    void reload();
+  };
+
+  const bulkMove = async (gid: string) => {
+    if (!gid || selected.size === 0) return;
+    for (const id of selected) {
+      try {
+        await api.updateItemMeta(id, { groupId: gid });
+      } catch {
+        /* keep going */
+      }
+    }
+    push("ok", `Moved ${selected.size} item(s)`);
+    setSelected(new Set());
+    void reload();
   };
 
   const openMeta = (it: Item) => {
@@ -351,11 +389,45 @@ export default function Files() {
             ))}
           </select>
         )}
+        <label className="ml-1 inline-flex items-center gap-1.5 text-[11px] text-slate-500">
+          <input
+            type="checkbox"
+            checked={visible.length > 0 && visible.every((i) => selected.has(i.id))}
+            onChange={(e) => setSelected(e.target.checked ? new Set(visible.map((i) => i.id)) : new Set())}
+            className="h-3.5 w-3.5 accent-indigo-500"
+            aria-label="Select all"
+          />
+          select
+        </label>
         <span className="ml-auto text-[11px] text-slate-500">
           {visible.length} {visible.length === 1 ? "item" : "items"}
           {visible.length > 0 ? ` · ${humanSize(visible.reduce((n, i) => n + i.size, 0))}` : ""}
         </span>
       </div>
+
+      {selected.size > 0 && (
+        <Card className="mb-3 flex flex-wrap items-center gap-2 px-3 py-2">
+          <span className="text-xs text-slate-300">{selected.size} selected</span>
+          <select
+            onChange={(e) => {
+              const v = e.target.value;
+              e.currentTarget.value = "";
+              if (v) void bulkMove(v);
+            }}
+            className="h-8 rounded-lg border border-[#2a3247] bg-[#12161f] px-2 text-xs text-slate-300"
+            aria-label="Move selected to group"
+          >
+            <option value="">Move to group…</option>
+            {groups.map((g) => (
+              <option key={g.id} value={g.id}>{g.name}</option>
+            ))}
+          </select>
+          <Btn size="sm" variant="danger" onClick={() => void bulkDelete()}>
+            <Icon name="trash" size={13} /> Move to trash
+          </Btn>
+          <Btn size="sm" variant="ghost" onClick={() => setSelected(new Set())}>Clear</Btn>
+        </Card>
+      )}
 
       {loading ? (
         <div className="flex justify-center py-16">
@@ -367,6 +439,14 @@ export default function Files() {
         <Card className="divide-y divide-[#1c2334] overflow-hidden">
           {visible.map((it) => (
             <div key={it.id} className="group flex items-center gap-3 p-4 transition hover:bg-white/[0.03]">
+              <input
+                type="checkbox"
+                checked={selected.has(it.id)}
+                onChange={() => toggleSel(it.id)}
+                onClick={(e) => e.stopPropagation()}
+                className="h-3.5 w-3.5 shrink-0 accent-indigo-500"
+                aria-label={`Select ${it.name}`}
+              />
               <button onClick={() => openItem(it)} className="shrink-0 text-slate-500 transition hover:text-indigo-300" title="Open preview">
                 <Icon name={mimeIcon(it.mime, it.name)} size={20} />
               </button>
