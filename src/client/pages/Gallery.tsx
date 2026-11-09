@@ -162,7 +162,7 @@ export default function Gallery() {
       ) : images.length === 0 ? (
         <Empty icon="image" title="No images yet" hint="Drop images above to add them here." />
       ) : (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
           {images.map((img, idx) => (
             <Card key={img.id} className="group relative overflow-hidden" onClick={() => setOpenIdx(idx)}>
               <div className="aspect-square overflow-hidden">

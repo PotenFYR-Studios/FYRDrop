@@ -114,7 +114,7 @@ export default function Groups() {
       ) : groups.length === 0 ? (
         <Empty icon="users" title="No groups yet" hint="Create a group and add people to share whole folders at once." />
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {groups.map((g) => (
             <button
               key={g.id}

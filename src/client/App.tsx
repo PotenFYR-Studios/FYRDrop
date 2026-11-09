@@ -268,7 +268,7 @@ function Shell({ children }: { children: ReactNode }) {
           </div>
         )}
 
-        <main key={loc.pathname} className="anim-page w-full max-w-[1900px] flex-1 px-4 py-6 sm:px-6 sm:py-7 lg:px-10">
+        <main key={loc.pathname} className="anim-page min-w-0 w-full flex-1 px-4 py-6 sm:px-6 sm:py-7 xl:px-9 2xl:px-12">
           <Suspense fallback={<RouteFallback />}>{children}</Suspense>
         </main>
       </div>

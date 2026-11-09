@@ -69,7 +69,7 @@ export default function Dashboard() {
         </div>
       ) : (
         <div className="space-y-7">
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
             <StatCard label="Items" value={items.length} sub="across all types" icon="folder" />
             <StatCard label="Storage used" value={humanSize(storage)} sub="sum of all items" icon="drive" />
             <StatCard label="Downloads" value={downloads} sub="total download count" icon="download" />
@@ -89,7 +89,7 @@ export default function Dashboard() {
             {pinned.length === 0 ? (
               <Empty icon="star" title="Nothing pinned yet" hint="Pin a file, note, link or image to reach it from here." />
             ) : (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
                 {pinned.map((p) => (
                   <Card key={p.id} className="group p-4">
                     <div className="flex items-start justify-between gap-2">
