@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, humanSize, type Item } from "../api";
 import { Btn, Card, Empty, Input, ItemMeta, Label, PageHeader, Spinner, Textarea, useSync, useToast } from "../ui";
 import { Icon } from "../icons";
@@ -401,26 +402,76 @@ ${body}
 }
 
 function ExportMenu({ onPick }: { onPick: (f: "txt" | "md" | "html" | "doc" | "pdf") => void }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  const ref = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (!(e.target instanceof Node)) return;
+      if (ref.current?.contains(e.target)) return;
+      if ((e.target as HTMLElement).closest("[data-export-menu]")) return;
+      setOpen(false);
+    };
+    const onScroll = () => setOpen(false);
+    window.addEventListener("mousedown", close);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  }, [open]);
+
+  const toggle = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (r) setPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+    setOpen((v) => !v);
+  };
+
   return (
-    <details className="relative">
-      <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded-lg border border-[#2a3247] bg-white/[0.04] px-2.5 py-1.5 text-xs text-slate-300 transition hover:text-white">
+    <>
+      <button
+        ref={ref}
+        onClick={toggle}
+        className="inline-flex items-center gap-1 rounded-lg border border-[#2a3247] bg-white/[0.04] px-2.5 py-1.5 text-xs text-slate-300 transition hover:text-white"
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
         <Icon name="download" size={13} /> Export
-      </summary>
-      <div className="absolute right-0 z-20 mt-1 w-40 overflow-hidden rounded-xl border border-[#2a3247] bg-[#0d1119] shadow-2xl">
-        {(
-          [
-            ["txt", "Plain text"],
-            ["md", "Markdown"],
-            ["html", "HTML"],
-            ["doc", "Word document"],
-            ["pdf", "PDF (print)"],
-          ] as const
-        ).map(([key, label]) => (
-          <button key={key} onClick={() => onPick(key)} className="block w-full px-3 py-2 text-left text-xs text-slate-300 transition hover:bg-white/[0.06] hover:text-white">
-            {label}
-          </button>
-        ))}
-      </div>
-    </details>
+      </button>
+      {open && pos &&
+        createPortal(
+          <div
+            data-export-menu
+            role="menu"
+            style={{ top: pos.top, right: pos.right }}
+            className="fixed z-[60] w-44 overflow-hidden rounded-xl border border-[#2a3247] bg-[#0d1119] py-1 shadow-2xl"
+          >
+            {(
+              [
+                ["txt", "Plain text"],
+                ["md", "Markdown"],
+                ["html", "HTML"],
+                ["doc", "Word document"],
+                ["pdf", "PDF (print)"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  onPick(key);
+                }}
+                className="block w-full px-3 py-2 text-left text-xs text-slate-300 transition hover:bg-white/[0.06] hover:text-white"
+              >
+                {label}
+              </button>
+            ))}
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
