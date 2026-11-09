@@ -96,7 +96,7 @@ export function ipInCidr(ip: string, cidr: string) {
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 /** Paths authenticated by something other than the browser cookie (signed node-to-node calls). */
-const CSRF_EXEMPT = ["/api/cluster-node/", "/api/federation/inbound"];
+const CSRF_EXEMPT = ["/api/cluster-node/"];
 
 export function csrfOriginCheck() {
   return async (c: Context, next: Next) => {

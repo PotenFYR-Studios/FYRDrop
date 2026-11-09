@@ -141,7 +141,7 @@ const server = Bun.serve({
     return app.fetch(req, { ip: srv.requestIP(req)?.address ?? "" });
   },
   ...(tlsActive ? { tls: { cert: tls.cert!, key: tls.key! } } : {}),
-  // Chunks are ≤32 MB, multipart ≤48 MB, cluster/federation JSON ≤~90 MB.
+  // Chunks are ≤32 MB, multipart ≤48 MB, cluster JSON ≤~90 MB.
   maxRequestBodySize: 96 * 1024 * 1024,
   idleTimeout: 120,
   development: false,
