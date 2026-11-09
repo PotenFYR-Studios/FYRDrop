@@ -88,7 +88,8 @@ function dayLabel(ts: number) {
 }
 
 function clock(ts: number) {
-  return new Date(ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  // 24-hour clock: one fixed-width line, no AM/PM wrapping in a narrow column.
+  return new Date(ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 }
 
 const SEVERITY_TONE = { info: "ok", warn: "warn", error: "bad" } as const;
@@ -99,9 +100,9 @@ function LogRow({ entry }: { entry: LogEntry }) {
   const hasMeta = entry.meta != null && (typeof entry.meta !== "object" || Object.keys(entry.meta as object).length > 0);
   return (
     <div className="group relative flex gap-3 px-3 py-3 transition hover:bg-white/[0.03] sm:px-4">
-      <div className="w-16 shrink-0 pt-0.5 text-right sm:w-20">
-        <div className="mono text-[11px] text-slate-400">{clock(entry.ts)}</div>
-        <div className="text-[10px] text-slate-500" title={new Date(entry.ts).toLocaleString()}>
+      <div className="w-20 shrink-0 pt-0.5 text-right tabular-nums sm:w-24">
+        <div className="mono whitespace-nowrap text-[11px] leading-4 text-slate-400">{clock(entry.ts)}</div>
+        <div className="whitespace-nowrap text-[10px] leading-4 text-slate-500" title={new Date(entry.ts).toLocaleString()}>
           {timeAgo(entry.ts)}
         </div>
       </div>
@@ -357,7 +358,7 @@ export default function Logs() {
         <Card className="overflow-hidden">
           {groups.map((group) => (
             <section key={dayKey(group[0]!.ts)}>
-              <div className="sticky top-0 z-10 flex items-center gap-2 border-y border-[#1c2334] bg-[#0d1119]/95 px-4 py-1.5 backdrop-blur first:border-t-0">
+              <div className="sticky top-0 z-10 flex items-center gap-2 border-y border-[#1c2334] bg-[#0d1119]/95 py-1.5 pl-[9rem] pr-4 backdrop-blur first:border-t-0 sm:pl-[10.25rem]">
                 <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">{dayLabel(group[0]!.ts)}</span>
                 <span className="text-[10px] text-slate-600">{group.length} event{group.length === 1 ? "" : "s"}</span>
               </div>
