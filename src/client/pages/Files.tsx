@@ -36,6 +36,7 @@ export default function Files() {
   const groupFilter = params.get("group") ?? "";
   const [categoryFilter, setCategoryFilter] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const folderRef = useRef<HTMLInputElement>(null);
   const jobsRef = useRef(new Map<string, AbortController>());
 
   // Leaving the page cancels anything still in flight instead of letting it
@@ -291,6 +292,35 @@ export default function Files() {
               <div className="font-medium text-white">{dragging ? "Release to upload" : "Drag and drop, paste, or click to browse"}</div>
               <div className="mt-0.5 text-xs text-slate-500">Multiple files · Ctrl+V works on this page · choose a group before uploading</div>
             </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                folderRef.current?.click();
+              }}
+              className="rounded-lg border border-[#2a3247] px-2.5 py-1 text-[11px] text-slate-400 transition hover:text-slate-200"
+            >
+              Upload folder
+            </button>
+            <input
+              ref={folderRef}
+              type="file"
+              multiple
+              className="hidden"
+              // @ts-expect-error non-standard but supported by Chromium and WebKit
+              webkitdirectory=""
+              onChange={(e) => {
+                const picked = Array.from(e.target.files ?? []);
+                if (picked.length) {
+                  setPending(
+                    picked.map((f) => {
+                      const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
+                      return new File([f], rel.replace(/\//g, "__"), { type: f.type || "application/octet-stream" });
+                    }),
+                  );
+                }
+                e.target.value = "";
+              }}
+            />
           </div>
           <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-1 rounded-xl border border-[#2a3247] bg-[#12161f] p-1">

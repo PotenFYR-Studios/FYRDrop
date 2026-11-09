@@ -15,6 +15,7 @@ export default function ShareWizard({ item, open, onClose }: { item: Item | null
   const [usePin, setUsePin] = useState(false);
   const [pin, setPin] = useState("");
   const [expiresDays, setExpiresDays] = useState(0);
+  const [alias, setAlias] = useState("");
   const [maxDownloads, setMaxDownloads] = useState(0);
   const [link, setLink] = useState<{ url: string; qr: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -60,6 +61,7 @@ export default function ShareWizard({ item, open, onClose }: { item: Item | null
         pin: usePin ? pin : undefined,
         expiresDays: expiresDays > 0 ? expiresDays : undefined,
         maxDownloads: maxDownloads > 0 ? maxDownloads : undefined,
+        alias: alias.trim() || undefined,
         allowedUserIds: audience === "users" ? selectedUsers : undefined,
       });
       const full = `${location.origin}${res.url}`;

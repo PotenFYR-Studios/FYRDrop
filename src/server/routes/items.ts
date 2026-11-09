@@ -741,13 +741,22 @@ itemRoutes.post("/:id/share", async (c) => {
   const pin = typeof body?.pin === "string" ? body.pin.trim() : "";
   if (pin && !PIN_RE.test(pin)) return c.json({ error: "Link PIN must be 4-10 digits." }, 400);
   const maxDl = Number(body?.maxDownloads);
-  // Short, URL-safe tokens: 8 characters from a 57 symbol alphabet (~46 bits).
+  // Short, URL-safe tokens: 8 characters, or a custom alias the user picks.
   const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  const wanted = typeof body?.alias === "string" ? body.alias.trim() : "";
   let token = "";
-  for (let attempt = 0; attempt < 6; attempt++) {
-    const bytes = crypto.randomBytes(8);
-    token = Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("");
-    if (!db.select({ token: shareLinks.token }).from(shareLinks).where(eq(shareLinks.token, token)).limit(1).get()) break;
+  if (wanted) {
+    if (!/^[a-z0-9][a-z0-9_-]{2,31}$/i.test(wanted)) return c.json({ error: "Alias must be 3-32 letters, numbers, dashes or underscores." }, 400);
+    if (db.select({ token: shareLinks.token }).from(shareLinks).where(eq(shareLinks.token, wanted)).limit(1).get()) {
+      return c.json({ error: "That alias is already taken." }, 409);
+    }
+    token = wanted;
+  } else {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const bytes = crypto.randomBytes(8);
+      token = Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("");
+      if (!db.select({ token: shareLinks.token }).from(shareLinks).where(eq(shareLinks.token, token)).limit(1).get()) break;
+    }
   }
   db.insert(shareLinks)
     .values({

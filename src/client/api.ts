@@ -468,7 +468,7 @@ export const api = {
   editNote: (id: string, content: string, title?: string) => req<{ item: Item }>(`/api/items/${id}/content`, patch({ content, title })),
 
   // share links
-  createShare: (id: string, opts: { expiresDays?: number; maxDownloads?: number; pin?: string; note?: string; allowedUserIds?: string[] }) =>
+  createShare: (id: string, opts: { expiresDays?: number; maxDownloads?: number; pin?: string; note?: string; allowedUserIds?: string[]; alias?: string }) =>
     req<{ token: string; url: string }>(`/api/items/${id}/share`, post(opts)),
   itemShares: (id: string) => req<{ links: ShareLink[] }>(`/api/items/${id}/share`),
   revokeShare: (id: string, token: string) => req(`/api/items/${id}/share/${token}`, { method: "DELETE" }),
