@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
-import { api, humanSize, isHttpUrl, runLimited, uploadFile, type Item } from "../api";
+import { useSearchParams } from "react-router-dom";
+import { api, humanSize, isHttpUrl, runLimited, uploadFile, type GroupSummary, type Item } from "../api";
 import { Badge, Btn, Card, Empty, ItemMeta, PageHeader, Progress, Spinner, useSync, useToast } from "../ui";
 import { Icon, mimeIcon } from "../icons";
 import ShareWizard from "./ShareWizard";
@@ -20,6 +21,12 @@ export default function Files() {
   const [shareItem, setShareItem] = useState<Item | null>(null);
   const [preview, setPreview] = useState<Item | null>(null);
   const [accessItem, setAccessItem] = useState<Item | null>(null);
+  const [groups, setGroups] = useState<GroupSummary[]>([]);
+  const [groupId, setGroupId] = useState("");
+  const [category, setCategory] = useState("");
+  const [labels, setLabels] = useState("");
+  const [params] = useSearchParams();
+  const groupFilter = params.get("group") ?? "";
   const inputRef = useRef<HTMLInputElement>(null);
   const jobsRef = useRef(new Map<string, AbortController>());
 
@@ -63,7 +70,18 @@ export default function Files() {
     return () => window.removeEventListener("paste", onPaste);
   }, []);
 
-  const visible = items.filter((i) => (tab === "all" ? true : i.type === tab));
+  const visible = items.filter((i) => {
+    if (tab !== "all" && i.type !== tab) return false;
+    if (groupFilter && i.groupId !== groupFilter) return false;
+    return true;
+  });
+
+  useEffect(() => {
+    api
+      .groups()
+      .then((r) => setGroups(r.groups))
+      .catch(() => {});
+  }, []);
 
   const runUpload = async (files: File[], access: AccessState) => {
     if (files.length === 0) return;
@@ -79,6 +97,9 @@ export default function Files() {
         await uploadFile(file, {
           expiresDays,
           access: payload,
+          groupId: groupId || undefined,
+          category: category.trim() || undefined,
+          labels: labels.trim() || undefined,
           signal: controller.signal,
           onProgress: (pct) => setJobs((j) => j.map((x) => (x.id === job.id ? { ...x, pct } : x))),
         });
@@ -198,6 +219,34 @@ export default function Files() {
             </button>
           ))}
         </div>
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-2" onClick={(e) => e.stopPropagation()}>
+          <select
+            value={groupId}
+            onChange={(e) => setGroupId(e.target.value)}
+            className="rounded-lg border border-[#2a3247] bg-[#12161f] px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-500"
+            aria-label="Group"
+          >
+            <option value="">Default group</option>
+            {groups.map((g) => (
+              <option key={g.id} value={g.id}>{g.name}</option>
+            ))}
+          </select>
+          <input
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            placeholder="Category"
+            maxLength={60}
+            className="w-28 rounded-lg border border-[#2a3247] bg-[#12161f] px-2.5 py-1.5 text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-indigo-500"
+            aria-label="Category"
+          />
+          <input
+            value={labels}
+            onChange={(e) => setLabels(e.target.value)}
+            placeholder="labels, comma separated"
+            className="w-44 rounded-lg border border-[#2a3247] bg-[#12161f] px-2.5 py-1.5 text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-indigo-500"
+            aria-label="Labels"
+          />
+        </div>
       </Card>
 
       {jobs.length > 0 && (
@@ -265,6 +314,12 @@ export default function Files() {
                     </Badge>
                   ) : null}
                   <AccessChips item={it} />
+                  {it.category && <span className="rounded-full border border-[#2a3247] px-2 py-0.5 text-[10px] text-slate-400">{it.category}</span>}
+                  {it.labels
+                    ? it.labels.split(",").filter(Boolean).slice(0, 3).map((l) => (
+                        <span key={l} className="rounded-full bg-white/[0.04] px-2 py-0.5 text-[10px] text-slate-500">#{l}</span>
+                      ))
+                    : null}
                 </div>
                 <ItemMeta item={it} />
               </div>

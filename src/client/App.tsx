@@ -14,6 +14,7 @@ const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Files = lazy(() => import("./pages/Files"));
 const Notepad = lazy(() => import("./pages/Notepad"));
 const Links = lazy(() => import("./pages/Links"));
+const Groups = lazy(() => import("./pages/Groups"));
 const Gallery = lazy(() => import("./pages/Gallery"));
 const Transfer = lazy(() => import("./pages/Transfer"));
 const Covert = lazy(() => import("./pages/Covert"));
@@ -29,6 +30,7 @@ const Security = lazy(() => import("./pages/admin/Security"));
 const AdminSettings = lazy(() => import("./pages/admin/Settings"));
 const Users = lazy(() => import("./pages/admin/Users"));
 const Cluster = lazy(() => import("./pages/admin/Cluster"));
+const AdminGroups = lazy(() => import("./pages/admin/Groups"));
 
 type AuthState = {
   ready: boolean;
@@ -63,6 +65,7 @@ const NAV: NavItem[] = [
   { to: "/files", label: "Files", icon: "folder" },
   { to: "/notepad", label: "Notepad", icon: "note" },
   { to: "/links", label: "Links", icon: "link" },
+  { to: "/groups", label: "Groups", icon: "users" },
   { to: "/gallery", label: "Gallery", icon: "image" },
   { to: "/transfer", label: "Device Transfer", icon: "transfer" },
   { to: "/covert", label: "Covert Tools", icon: "shield" },
@@ -75,6 +78,7 @@ const ADMIN_NAV: NavItem[] = [
   { to: "/admin/logs", label: "Activity", icon: "history" },
   { to: "/admin/storage", label: "Storage", icon: "drive" },
   { to: "/admin/users", label: "Users", icon: "users" },
+  { to: "/admin/groups", label: "Groups", icon: "users" },
   { to: "/admin/security", label: "Security", icon: "shieldCheck" },
   { to: "/admin/cluster", label: "Cluster", icon: "globe" },
   { to: "/admin/settings", label: "Settings", icon: "settings" },
@@ -282,6 +286,7 @@ function AuthedApp() {
         <Route path="/files" element={<Files />} />
         <Route path="/notepad" element={<Notepad />} />
         <Route path="/links" element={<Links />} />
+        <Route path="/groups" element={<Groups />} />
         <Route path="/gallery" element={<Gallery />} />
         <Route path="/transfer" element={<Transfer />} />
         <Route path="/covert" element={<Covert />} />
@@ -294,6 +299,7 @@ function AuthedApp() {
         <Route path="/admin/connections" element={<Navigate to="/admin/devices" replace />} />
         <Route path="/admin/storage" element={<Storage />} />
         <Route path="/admin/users" element={<Users />} />
+        <Route path="/admin/groups" element={<AdminGroups />} />
         <Route path="/admin/security" element={<Security />} />
         <Route path="/admin/cluster" element={<Cluster />} />
         <Route path="/admin/settings" element={<AdminSettings />} />

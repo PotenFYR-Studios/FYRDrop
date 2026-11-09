@@ -3,7 +3,7 @@ import { and, eq, gt, isNull, lt, or, sql, like } from "drizzle-orm";
 import fs from "node:fs";
 import path from "node:path";
 import { db, dirs, purgeExpired } from "../db";
-import { items, sessions, certs, auditLog, clusterNodes, storageUnits, users } from "../db/schema";
+import { items, sessions, certs, auditLog, clusterNodes, storageUnits, users, groups, groupMembers } from "../db/schema";
 import { requireOwner } from "../lib/auth";
 import { availableBytes, resolveUnitPath, listUnits, invalidateUnits, parseRef, usage, dirUsage } from "../lib/storage";
 import { readConfig, writeConfig } from "../lib/config";
@@ -11,6 +11,7 @@ import { decryptString } from "../lib/crypto";
 import { getSettings } from "../lib/settings";
 import { clientIp, type AppEnv } from "../lib/net";
 import { audit } from "./users";
+import { ensureDefaultGroup } from "../lib/groups";
 import { currentVersion, updateMode, readPending, latestRelease, stageRelease, cancelStaging, scheduleRestart, history, lastFailure, REPO } from "../lib/update";
 
 export const adminRoutes = new Hono<AppEnv>();
@@ -568,4 +569,41 @@ adminRoutes.post("/update/restart", (c) => {
   // Give the response time to flush, then let the helper take over.
   setTimeout(() => process.exit(0), 600);
   return c.json({ ok: true, restarting: true, to: pending.to });
+});
+
+/* --------------------------------- Groups --------------------------------- */
+
+adminRoutes.get("/groups", (c) => {
+  const rows = db.select().from(groups).all();
+  const userMap = new Map(db.select().from(users).all().map((u) => [u.id, { id: u.id, name: u.name, username: u.username }]));
+  const counts = new Map(
+    db.select({ groupId: items.groupId, n: sql<number>`count(*)` }).from(items).groupBy(items.groupId).all().map((r) => [r.groupId, r.n]),
+  );
+  return c.json({
+    groups: rows
+      .map((g) => ({
+        id: g.id,
+        name: g.name,
+        description: g.description,
+        color: g.color,
+        ownerId: g.ownerId,
+        owner: userMap.get(g.ownerId) ?? null,
+        isDefault: g.isDefault === 1,
+        itemCount: counts.get(g.id) ?? 0,
+        createdAt: g.createdAt,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  });
+});
+
+adminRoutes.delete("/groups/:id", (c) => {
+  const g = db.select().from(groups).where(eq(groups.id, c.req.param("id"))).limit(1).get();
+  if (!g) return c.json({ error: "Not found." }, 404);
+  if (g.isDefault === 1) return c.json({ error: "A Default group cannot be deleted." }, 400);
+  const fallback = ensureDefaultGroup(g.ownerId);
+  db.update(items).set({ groupId: fallback }).where(eq(items.groupId, g.id)).run();
+  db.delete(groupMembers).where(eq(groupMembers.groupId, g.id)).run();
+  db.delete(groups).where(eq(groups.id, g.id)).run();
+  audit(c, "group.deleted", true, `Admin deleted group "${g.name}"`, { severity: "warn", target: g.name });
+  return c.json({ ok: true });
 });

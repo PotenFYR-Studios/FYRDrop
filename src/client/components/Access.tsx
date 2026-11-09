@@ -1,50 +1,51 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, humanSize, isHttpUrl, type Item, type UserProfile } from "../api";
+import { api, humanSize, isHttpUrl, type GroupSummary, type Item, type UserProfile } from "../api";
 import { Btn, Input, Label, Modal, useToast } from "../ui";
 import { Icon } from "../icons";
 import { mimeIcon } from "../icons";
 
-export type Scope = "everyone" | "selected" | "private";
+export type Scope = "everyone" | "selected" | "group" | "private";
 
 export interface AccessState {
-  read: { scope: Scope; users: string[] };
-  write: { scope: Scope; users: string[] };
-  delete: { scope: Scope; users: string[] };
+  read: { scope: Scope; users: string[]; groups: string[] };
+  write: { scope: Scope; users: string[]; groups: string[] };
+  delete: { scope: Scope; users: string[]; groups: string[] };
 }
 
 export function defaultAccess(): AccessState {
   return {
     // Anyone can read by default; only the uploader (and owner) can change or
     // remove it. Matches the server-side default for new items.
-    read: { scope: "everyone", users: [] },
-    write: { scope: "private", users: [] },
-    delete: { scope: "private", users: [] },
+    read: { scope: "everyone", users: [], groups: [] },
+    write: { scope: "private", users: [], groups: [] },
+    delete: { scope: "private", users: [], groups: [] },
   };
 }
 
 export function accessFromItem(item: Item): AccessState {
   const split = (v: string) => (v ? v.split(",").filter(Boolean) : []);
   return {
-    read: { scope: item.audience, users: split(item.audienceUsers) },
-    write: { scope: item.writeAccess, users: split(item.writeUsers) },
-    delete: { scope: item.deleteAccess, users: split(item.deleteUsers) },
+    read: { scope: item.audience, users: split(item.audienceUsers), groups: split(item.audienceGroups ?? "") },
+    write: { scope: item.writeAccess, users: split(item.writeUsers), groups: split(item.writeGroups ?? "") },
+    delete: { scope: item.deleteAccess, users: split(item.deleteUsers), groups: split(item.deleteGroups ?? "") },
   };
 }
 
 export function toPayload(a: AccessState) {
   return {
-    read: { scope: a.read.scope, userIds: a.read.users },
-    write: { scope: a.write.scope, userIds: a.write.users },
-    delete: { scope: a.delete.scope, userIds: a.delete.users },
+    read: { scope: a.read.scope, userIds: a.read.users, groupIds: a.read.groups },
+    write: { scope: a.write.scope, userIds: a.write.users, groupIds: a.write.groups },
+    delete: { scope: a.delete.scope, userIds: a.delete.users, groupIds: a.delete.groups },
   };
 }
 
-const SCOPE_LABEL: Record<Scope, string> = { everyone: "Everyone", selected: "Selected", private: "Private" };
+const SCOPE_LABEL: Record<Scope, string> = { everyone: "Everyone", selected: "Selected", group: "Group", private: "Private" };
 
 function ScopeBadge({ label, scope }: { label: string; scope: Scope }) {
   const tone =
     scope === "everyone" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
     : scope === "selected" ? "border-indigo-500/30 bg-indigo-500/10 text-indigo-300"
+    : scope === "group" ? "border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-300"
     : "border-amber-500/30 bg-amber-500/10 text-amber-300";
   return <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${tone}`}>{label}: {SCOPE_LABEL[scope]}</span>;
 }
@@ -64,13 +65,15 @@ function ScopeRow({
   hint,
   value,
   people,
+  groups,
   onChange,
 }: {
   label: string;
   hint: string;
-  value: { scope: Scope; users: string[] };
+  value: { scope: Scope; users: string[]; groups: string[] };
   people: UserProfile[];
-  onChange: (v: { scope: Scope; users: string[] }) => void;
+  groups: GroupSummary[];
+  onChange: (v: { scope: Scope; users: string[]; groups: string[] }) => void;
 }) {
   const toggle = (id: string) => {
     const has = value.users.includes(id);
@@ -80,8 +83,8 @@ function ScopeRow({
     <div className="rounded-xl border border-[#232a3a] bg-[#12161f] p-3">
       <div className="text-xs font-semibold text-slate-200">{label}</div>
       <div className="mt-0.5 text-[11px] leading-snug text-slate-500">{hint}</div>
-      <div className="mt-2.5 grid grid-cols-3 gap-1" role="group" aria-label={label}>
-        {(["everyone", "selected", "private"] as const).map((s) => {
+      <div className="mt-2.5 grid grid-cols-4 gap-1" role="group" aria-label={label}>
+        {(["everyone", "selected", "group", "private"] as const).map((s) => {
           const active = value.scope === s;
           return (
             <button
@@ -100,6 +103,35 @@ function ScopeRow({
           );
         })}
       </div>
+      {value.scope === "group" && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {groups.length === 0 ? (
+            <span className="text-[11px] text-slate-500">You are not in any group yet. Create one on the Groups page.</span>
+          ) : (
+            groups.map((g) => {
+              const on = value.groups.includes(g.id);
+              return (
+                <button
+                  key={g.id}
+                  type="button"
+                  onClick={() =>
+                    onChange({
+                      ...value,
+                      groups: on ? value.groups.filter((x) => x !== g.id) : [...value.groups, g.id],
+                    })
+                  }
+                  aria-pressed={on}
+                  className={`rounded-full border px-2.5 py-1 text-[11px] transition ${
+                    on ? "border-fuchsia-500 bg-fuchsia-500/20 text-white" : "border-[#2a3247] text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  {g.name}
+                </button>
+              );
+            })
+          )}
+        </div>
+      )}
       {value.scope === "selected" && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {people.length === 0 ? (
@@ -131,17 +163,22 @@ function ScopeRow({
 /** Three-row read/write/delete picker used by uploads and existing items. */
 export function AccessPicker({ value, onChange }: { value: AccessState; onChange: (v: AccessState) => void }) {
   const [people, setPeople] = useState<UserProfile[]>([]);
+  const [groups, setGroups] = useState<GroupSummary[]>([]);
   useEffect(() => {
     api
       .allUsers()
       .then((r) => setPeople(r.users))
       .catch(() => {});
+    api
+      .groups()
+      .then((r) => setGroups(r.groups))
+      .catch(() => {});
   }, []);
   return (
     <div className="space-y-2">
-      <ScopeRow label="Read" hint="Who can view and download" value={value.read} people={people} onChange={(v) => onChange({ ...value, read: v })} />
-      <ScopeRow label="Write" hint="Who can edit notes and rename" value={value.write} people={people} onChange={(v) => onChange({ ...value, write: v })} />
-      <ScopeRow label="Delete" hint="Who can remove this item" value={value.delete} people={people} onChange={(v) => onChange({ ...value, delete: v })} />
+      <ScopeRow label="Read" hint="Who can view and download" value={value.read} people={people} groups={groups} onChange={(v) => onChange({ ...value, read: v })} />
+      <ScopeRow label="Write" hint="Who can edit notes and rename" value={value.write} people={people} groups={groups} onChange={(v) => onChange({ ...value, write: v })} />
+      <ScopeRow label="Delete" hint="Who can remove this item" value={value.delete} people={people} groups={groups} onChange={(v) => onChange({ ...value, delete: v })} />
     </div>
   );
 }

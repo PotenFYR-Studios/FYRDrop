@@ -1,6 +1,6 @@
 /** Typed API client for FYRDrop. Cookie-based auth (httpOnly, SameSite=Lax). */
 
-export type Scope = "everyone" | "selected" | "private";
+export type Scope = "everyone" | "selected" | "group" | "private";
 
 export interface Item {
   id: string;
@@ -17,12 +17,18 @@ export interface Item {
   hasContent: boolean;
   preview?: string;
   thumbName?: string | null;
+  groupId: string;
+  category: string;
+  labels: string;
   audience: Scope;
   audienceUsers: string;
+  audienceGroups: string;
   writeAccess: Scope;
   writeUsers: string;
+  writeGroups: string;
   deleteAccess: Scope;
   deleteUsers: string;
+  deleteGroups: string;
   canWrite: boolean;
   canDelete: boolean;
   canManage: boolean;
@@ -246,6 +252,35 @@ export interface ClusterOverview {
 }
 
 
+
+export interface GroupSummary {
+  id: string;
+  name: string;
+  description: string;
+  color: string;
+  ownerId: string;
+  isDefault: boolean;
+  createdAt: number;
+  mine: boolean;
+  itemCount: number;
+  memberCount: number;
+}
+
+export interface GroupMember {
+  groupId: string;
+  userId: string;
+  role: string;
+  addedBy: string;
+  createdAt: number;
+  user: UserProfile | null;
+}
+
+export interface GroupDetail {
+  group: GroupSummary;
+  members: GroupMember[];
+  canManage: boolean;
+}
+
 export interface UpdatePending {
   from: string;
   to: string;
@@ -281,9 +316,9 @@ export interface UpdateCheck {
 }
 
 export interface AccessPayload {
-  read: { scope: Scope; userIds: string[] };
-  write: { scope: Scope; userIds: string[] };
-  delete: { scope: Scope; userIds: string[] };
+  read: { scope: Scope; userIds: string[]; groupIds?: string[] };
+  write: { scope: Scope; userIds: string[]; groupIds?: string[] };
+  delete: { scope: Scope; userIds: string[]; groupIds?: string[] };
 }
 
 export class ApiError extends Error {
@@ -370,19 +405,28 @@ export const api = {
   // items
   items: (type?: Item["type"], signal?: AbortSignal) => req<{ items: Item[] }>(`/api/items${type ? `?type=${type}` : ""}`, { signal }),
   pinned: (signal?: AbortSignal) => req<{ items: Item[] }>("/api/items/pinned/all", { signal }),
-  upload: (files: File[], expiresDays: number, access: AccessPayload, signal?: AbortSignal) => {
+  upload: (
+    files: File[],
+    expiresDays: number,
+    access: AccessPayload,
+    signal?: AbortSignal,
+    meta?: { groupId?: string; category?: string; labels?: string },
+  ) => {
     const form = new FormData();
     files.forEach((f) => form.append("files", f));
     form.append("expiresDays", String(expiresDays));
     form.append("access", JSON.stringify(access));
+    if (meta?.groupId) form.append("groupId", meta.groupId);
+    if (meta?.category) form.append("category", meta.category);
+    if (meta?.labels) form.append("labels", meta.labels);
     return req<{ items: Item[] }>("/api/items/upload", { method: "POST", body: form, signal });
   },
   shareText: (title: string, content: string, expiresDays: number, access: AccessPayload) =>
     req<{ item: Item }>("/api/items/text", post({ title, content, expiresDays, access })),
   shareUrl: (title: string, url: string, expiresDays: number, access: AccessPayload) =>
     req<{ item: Item }>("/api/items/url", post({ title, url, expiresDays, access })),
-  beginChunked: (name: string, size: number, mime: string, chunkSize: number, access: AccessPayload) =>
-    req<{ uploadId: string; chunkSize: number; chunkCount: number }>("/api/items/upload/begin", post({ name, size, mime, chunkSize, access })),
+  beginChunked: (name: string, size: number, mime: string, chunkSize: number, access: AccessPayload, meta?: { groupId?: string; category?: string; labels?: string }) =>
+    req<{ uploadId: string; chunkSize: number; chunkCount: number }>("/api/items/upload/begin", post({ name, size, mime, chunkSize, access, ...meta })),
   sendChunk: (uploadId: string, index: number, data: Blob, signal?: AbortSignal) =>
     req(`/api/items/upload/chunk/${uploadId}/${index}`, { method: "PUT", body: data, signal }),
   finishChunked: (uploadId: string, expiresDays: number) => req<{ item: Item }>("/api/items/upload/finish", post({ uploadId, expiresDays })),
@@ -449,7 +493,18 @@ export const api = {
   // overview (all signed-in users)
   overview: () => req<any>("/api/overview"),
 
+  // groups
+  groups: () => req<{ groups: GroupSummary[] }>("/api/groups"),
+  createGroup: (p: { name: string; description?: string; color?: string }) => req<{ group: GroupSummary }>("/api/groups", post(p)),
+  group: (id: string) => req<GroupDetail>(`/api/groups/${id}`),
+  updateGroup: (id: string, p: { name?: string; description?: string; color?: string }) => req<{ group: GroupSummary }>(`/api/groups/${id}`, patch(p)),
+  deleteGroup: (id: string) => req<{ ok: boolean; movedTo: string }>(`/api/groups/${id}`, { method: "DELETE" }),
+  addGroupMember: (id: string, username: string) => req<{ ok: boolean }>(`/api/groups/${id}/members`, post({ username })),
+  removeGroupMember: (id: string, userId: string) => req(`/api/groups/${id}/members/${userId}`, { method: "DELETE" }),
+
   // updates (owner)
+  adminGroups: () => req<{ groups: { id: string; name: string; description: string; color: string; ownerId: string; owner: { id: string; name: string; username: string | null } | null; isDefault: boolean; itemCount: number; createdAt: number }[] }>("/api/admin/groups"),
+  adminDeleteGroup: (id: string) => req(`/api/admin/groups/${id}`, { method: "DELETE" }),
   updateStatus: () => req<UpdateStatus>("/api/admin/update"),
   updateCheck: () => req<UpdateCheck>("/api/admin/update/check", post()),
   updateStage: (tag: string) => req<{ ok: boolean; pending: UpdatePending }>("/api/admin/update/stage", post({ tag })),
@@ -486,16 +541,24 @@ const CHUNK = 8 * 1024 * 1024;
 /** Upload with automatic chunking for big files. Abortable; aborted chunked uploads are cleaned up server-side. */
 export async function uploadFile(
   file: File,
-  opts: { expiresDays?: number; onProgress?: (pct: number) => void; access: AccessPayload; signal?: AbortSignal },
+  opts: { expiresDays?: number; onProgress?: (pct: number) => void; access: AccessPayload; signal?: AbortSignal; groupId?: string; category?: string; labels?: string },
 ) {
   const onProgress = opts.onProgress ?? (() => {});
   if (file.size <= MULTIPART_THRESHOLD) {
     onProgress(15);
-    const res = await api.upload([file], opts.expiresDays ?? 0, opts.access, opts.signal);
+    const res = await api.upload([file], opts.expiresDays ?? 0, opts.access, opts.signal, {
+      groupId: opts.groupId,
+      category: opts.category,
+      labels: opts.labels,
+    });
     onProgress(100);
     return res.items[0]!;
   }
-  const { uploadId, chunkCount, chunkSize } = await api.beginChunked(file.name, file.size, file.type || "application/octet-stream", CHUNK, opts.access);
+  const { uploadId, chunkCount, chunkSize } = await api.beginChunked(file.name, file.size, file.type || "application/octet-stream", CHUNK, opts.access, {
+    groupId: opts.groupId,
+    category: opts.category,
+    labels: opts.labels,
+  });
   try {
     for (let i = 0; i < chunkCount; i++) {
       if (opts.signal?.aborted) throw new DOMException("Aborted", "AbortError");
