@@ -253,6 +253,34 @@ export interface ClusterOverview {
 
 
 
+
+export interface RemoteUser {
+  id: string;
+  userId: string;
+  nodeId: string;
+  nodeName: string;
+  name: string;
+  username: string | null;
+  role: string;
+  avatar: string | null;
+  color: string;
+}
+
+export interface RemoteItem {
+  id: string;
+  remoteId: string;
+  remoteNode: string;
+  remoteNodeName: string;
+  type: string;
+  name: string;
+  mime: string;
+  size: number;
+  uploadedBy: string;
+  createdAt: number;
+  category: string;
+  labels: string;
+}
+
 export interface GroupSummary {
   id: string;
   name: string;
@@ -492,6 +520,10 @@ export const api = {
 
   // overview (all signed-in users)
   overview: () => req<any>("/api/overview"),
+
+  // linked-instance content
+  remoteUsers: () => req<{ users: RemoteUser[] }>("/api/remote/users"),
+  remoteItems: () => req<{ items: RemoteItem[] }>("/api/remote/items"),
 
   // groups
   groups: () => req<{ groups: GroupSummary[] }>("/api/groups"),

@@ -207,6 +207,17 @@ CREATE TABLE IF NOT EXISTS group_members (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (group_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS cluster_users (
+  node_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  username TEXT,
+  role TEXT NOT NULL DEFAULT 'user',
+  avatar TEXT,
+  color TEXT NOT NULL DEFAULT '#6366f1',
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (node_id, user_id)
+);
 CREATE TABLE IF NOT EXISTS user_pins (
   user_id TEXT NOT NULL,
   item_id TEXT NOT NULL,

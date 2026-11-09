@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api, humanSize, isHttpUrl, runLimited, uploadFile, type GroupSummary, type Item } from "../api";
+import { api, humanSize, isHttpUrl, runLimited, uploadFile, type GroupSummary, type Item, type RemoteItem } from "../api";
 import { Badge, Btn, Card, Empty, ItemMeta, PageHeader, Progress, Spinner, useSync, useToast } from "../ui";
 import { Icon, mimeIcon } from "../icons";
 import ShareWizard from "./ShareWizard";
@@ -13,6 +13,7 @@ export default function Files() {
   const { push } = useToast();
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<Item[]>([]);
+  const [remoteItems, setRemoteItems] = useState<RemoteItem[]>([]);
   const [tab, setTab] = useState<Tab>("all");
   const [expiresDays, setExpiresDays] = useState(0);
   const [jobs, setJobs] = useState<UploadJob[]>([]);
@@ -80,6 +81,10 @@ export default function Files() {
     api
       .groups()
       .then((r) => setGroups(r.groups))
+      .catch(() => {});
+    api
+      .remoteItems()
+      .then((r) => setRemoteItems(r.items))
       .catch(() => {});
   }, []);
 
@@ -375,6 +380,34 @@ export default function Files() {
               </div>
             </div>
           ))}
+        </Card>
+      )}
+
+      {remoteItems.length > 0 && (
+        <Card className="mt-6 overflow-hidden">
+          <div className="flex items-center gap-2 border-b border-[#1c2334] bg-white/[0.02] px-4 py-2.5">
+            <Icon name="globe" size={15} className="text-cyan-300" />
+            <span className="text-sm font-medium text-slate-200">From linked instances</span>
+            <Badge tone="info">{remoteItems.length}</Badge>
+          </div>
+          <div className="divide-y divide-[#161c28]">
+            {remoteItems.map((r) => (
+              <div key={r.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                <Icon name={mimeIcon(r.mime, r.name)} size={18} />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm text-slate-100">{r.name}</div>
+                  <div className="mt-0.5 flex flex-wrap gap-x-2 text-[11px] text-slate-500">
+                    <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[10px] text-cyan-300">{r.remoteNodeName}</span>
+                    <span>{humanSize(r.size)}</span>
+                    {r.category && <span>· {r.category}</span>}
+                  </div>
+                </div>
+                <Btn size="sm" variant="soft" href={`/api/remote/${r.remoteNode}/item/${r.remoteId}/download`}>
+                  <Icon name="download" size={14} /> Download
+                </Btn>
+              </div>
+            ))}
+          </div>
         </Card>
       )}
 

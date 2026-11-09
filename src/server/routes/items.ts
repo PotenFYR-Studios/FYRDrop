@@ -83,6 +83,11 @@ const SCOPES = new Set(["everyone", "selected", "group", "private"]);
 const normScope = (v: unknown, fallback: Scope): Scope => (typeof v === "string" && SCOPES.has(v) ? (v as Scope) : fallback);
 const normIds = (v: unknown) =>
   Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === "string" && /^[0-9a-f-]{36}$/i.test(x)))].slice(0, 500).join(",") : "";
+const PRINCIPAL_RE = /^(?:[0-9a-f]{16,64}:)?[0-9a-f-]{36}$/i;
+const normPrincipals = (v: unknown) =>
+  Array.isArray(v)
+    ? [...new Set(v.filter((x): x is string => typeof x === "string" && PRINCIPAL_RE.test(x)))].slice(0, 500).join(",")
+    : "";
 const normGroupIds = (v: unknown) =>
   Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === "string" && /^[0-9a-f-]{36}$/i.test(x)))].slice(0, 200).join(",") : "";
 export const cleanCategory = (v: unknown) => (typeof v === "string" ? v.trim().slice(0, 60) : "");
@@ -103,13 +108,13 @@ function parseAccess(body: any, opts: { defaultGroupId?: string } = {}) {
   const readGroups = read === "group" ? normGroupIds(body?.read?.groupIds ?? (opts.defaultGroupId ? [opts.defaultGroupId] : [])) : "";
   return {
     audience: read,
-    audienceUsers: read === "selected" ? normIds(body?.read?.userIds ?? body?.audienceUserIds) : "",
+    audienceUsers: read === "selected" ? normPrincipals(body?.read?.userIds ?? body?.audienceUserIds) : "",
     audienceGroups: readGroups,
     writeAccess: write,
-    writeUsers: write === "selected" ? normIds(body?.write?.userIds) : "",
+    writeUsers: write === "selected" ? normPrincipals(body?.write?.userIds) : "",
     writeGroups: write === "group" ? normGroupIds(body?.write?.groupIds) : "",
     deleteAccess: del,
-    deleteUsers: del === "selected" ? normIds(body?.delete?.userIds) : "",
+    deleteUsers: del === "selected" ? normPrincipals(body?.delete?.userIds) : "",
     deleteGroups: del === "group" ? normGroupIds(body?.delete?.groupIds) : "",
   };
 }

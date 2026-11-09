@@ -4,7 +4,7 @@ import { and, eq, sql } from "drizzle-orm";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { db } from "../db";
-import { clusterNodes, items, kv } from "../db/schema";
+import { clusterNodes, clusterUsers, items, kv, groupMembers, users } from "../db/schema";
 import { decryptString, encryptString, readDecrypted } from "../lib/crypto";
 import { writeStoredFile, pathForRef, deleteStoredFile, availableBytes, quotaBytes, localStorageBytes } from "../lib/storage";
 import { storedFileName } from "../lib/files";
@@ -397,6 +397,12 @@ clusterRoutes.post("/outgoing/:nodeId/approve", async (c) => {
   } catch {
     /* the manual refresh button covers this */
   }
+  try {
+    const fresh = db.select().from(clusterNodes).where(eq(clusterNodes.id, out.nodeId)).limit(1).get();
+    if (fresh) await syncClusterUsers(fresh, key);
+  } catch {
+    /* directory is best effort */
+  }
   audit(c, "cluster.linked", true, `Linked with "${out.name}"`, {
     target: out.name,
     meta: { nodeId: out.nodeId, fingerprint, encryption: "aes-256-gcm" },
@@ -455,6 +461,7 @@ clusterRoutes.post("/refresh", async (c) => {
           })
           .where(eq(clusterNodes.id, node.id))
           .run();
+        await syncClusterUsers(node, key);
         results.push({ id: node.id, ok: true });
       } catch (err) {
         db.update(clusterNodes).set({ lastStatus: "unreachable", lastSeenAt: Date.now() }).where(eq(clusterNodes.id, node.id)).run();
@@ -757,7 +764,7 @@ async function authenticate(c: any): Promise<{ node: typeof clusterNodes.$inferS
   return { node, key, payload };
 }
 
-async function sealedFetch(node: typeof clusterNodes.$inferSelect, key: Buffer, method: "GET" | "POST", path: string, payload?: any, timeoutMs = 20_000) {
+export async function sealedFetch(node: typeof clusterNodes.$inferSelect, key: Buffer, method: "GET" | "POST", path: string, payload?: any, timeoutMs = 20_000) {
   const body = payload === undefined ? "" : JSON.stringify(seal(key, payload));
   const headers: Record<string, string> = { ...signRequest(key, getIdentity().id, method, path, body) };
   if (body) headers["content-type"] = "application/json";
@@ -775,6 +782,54 @@ async function sealedFetch(node: typeof clusterNodes.$inferSelect, key: Buffer, 
   }
   if (!text) return null;
   return open(key, JSON.parse(text));
+}
+
+/* --------------------------- Remote principals --------------------------- */
+
+const principal = (nodeId: string, userId: string) => `${nodeId}:${userId}`;
+
+function idsCsv(v: string | null | undefined) {
+  return v ? v.split(",").filter(Boolean) : [];
+}
+
+/** Read check for an account on a linked instance. */
+function remoteVisible(row: typeof items.$inferSelect, key: string) {
+  if (row.audience === "everyone") return true;
+  if (row.audience === "selected" && idsCsv(row.audienceUsers).includes(key)) return true;
+  if (row.audience === "group") {
+    const mine = db.select({ groupId: groupMembers.groupId }).from(groupMembers).where(eq(groupMembers.userId, key)).all();
+    return mine.some((m) => idsCsv(row.audienceGroups).includes(m.groupId));
+  }
+  return false;
+}
+
+/** Pull the account directory from a peer and store it for access pickers. */
+export async function syncClusterUsers(node: typeof clusterNodes.$inferSelect, key: Buffer) {
+  try {
+    const data = (await sealedFetch(node, key, "GET", "/api/cluster-node/users", undefined, 10_000)) as any;
+    const list = Array.isArray(data?.users) ? data.users : [];
+    for (const u of list.slice(0, 2000)) {
+      if (typeof u?.id !== "string" || !/^[0-9a-f-]{36}$/i.test(u.id)) continue;
+      db.insert(clusterUsers)
+        .values({
+          nodeId: node.id,
+          userId: u.id,
+          name: String(u.name ?? "").slice(0, 80),
+          username: typeof u.username === "string" ? u.username.slice(0, 40) : null,
+          role: u.role === "owner" ? "owner" : "user",
+          avatar: typeof u.avatar === "string" ? u.avatar.slice(0, 400) : null,
+          color: /^#[0-9a-f]{6}$/i.test(String(u.color)) ? String(u.color) : "#6366f1",
+          updatedAt: Date.now(),
+        })
+        .onConflictDoUpdate({
+          target: [clusterUsers.nodeId, clusterUsers.userId],
+          set: { name: String(u.name ?? "").slice(0, 80), username: typeof u.username === "string" ? u.username.slice(0, 40) : null, role: u.role === "owner" ? "owner" : "user", updatedAt: Date.now() },
+        })
+        .run();
+    }
+  } catch {
+    /* unreachable peer */
+  }
 }
 
 /* ---------------------------- Peer data endpoints -------------------------- */
@@ -795,6 +850,68 @@ clusterNodeRoutes.get("/manifest", requireLinked, async (c) => {
       node: { id: getIdentity().id, name: appName() },
       items: live,
       storage: { bytes: localStorageBytes(), count, quotaBytes: quotaBytes(), freeBytes: availableBytes() },
+    }),
+  );
+});
+
+clusterNodeRoutes.get("/users", requireLinked, async (c) => {
+  const { key } = c.get("clusterAuth") as any;
+  const list = db
+    .select({ id: users.id, name: users.name, username: users.username, role: users.role, avatar: users.avatar, color: users.color })
+    .from(users)
+    .all();
+  return c.json(seal(key, { users: list }));
+});
+
+clusterNodeRoutes.post("/visible", requireLinked, async (c) => {
+  const { key, node, payload } = c.get("clusterAuth") as any;
+  const userId = String(payload?.userId ?? "");
+  if (!/^[0-9a-f-]{36}$/i.test(userId)) return c.json({ error: "Invalid user." }, 400);
+  const remoteKey = principal(node.id, userId);
+  const now = Date.now();
+  const rows = db.select().from(items).all().filter((r) => (!r.expiresAt || r.expiresAt > now) && remoteVisible(r, remoteKey));
+  return c.json(
+    seal(key, {
+      items: rows.map((r) => ({
+        id: r.id,
+        type: r.type,
+        name: r.name,
+        mime: r.mime,
+        size: r.size,
+        uploadedBy: r.uploadedBy,
+        createdAt: r.createdAt,
+        category: r.category,
+        labels: r.labels,
+      })),
+    }),
+  );
+});
+
+clusterNodeRoutes.post("/item-as/:id", requireLinked, async (c) => {
+  const { key, node, payload } = c.get("clusterAuth") as any;
+  const userId = String(payload?.userId ?? "");
+  if (!/^[0-9a-f-]{36}$/i.test(userId)) return c.json({ error: "Invalid user." }, 400);
+  const row = db.select().from(items).where(eq(items.id, c.req.param("id"))).limit(1).get();
+  if (!row || (row.expiresAt && row.expiresAt <= Date.now()) || !remoteVisible(row, principal(node.id, userId))) {
+    return c.json({ error: "Not found." }, 404);
+  }
+  let fileData: string | null = null;
+  if (row.storedName) {
+    const fp = pathForRef(row.storedName);
+    if (!fs.existsSync(fp)) return c.json({ error: "Stored file missing." }, 410);
+    if (row.size > MAX_CLUSTER_BYTES) return c.json({ error: "Too large for remote access." }, 413);
+    fileData = readDecrypted(fp).toString("base64");
+  }
+  return c.json(
+    seal(key, {
+      item: {
+        name: row.name,
+        type: row.type,
+        mime: row.mime,
+        size: row.size,
+        content: row.content ? decryptString(row.content) : null,
+        fileData,
+      },
     }),
   );
 });

@@ -254,3 +254,15 @@ export const groupMembers = sqliteTable("group_members", {
   addedBy: text("added_by").notNull().default(""),
   createdAt: integer("created_at").notNull(),
 });
+
+/** Directory of accounts on linked instances, used when granting access to a person on another node. */
+export const clusterUsers = sqliteTable("cluster_users", {
+  nodeId: text("node_id").notNull(),
+  userId: text("user_id").notNull(),
+  name: text("name").notNull().default(""),
+  username: text("username"),
+  role: text("role").notNull().default("user"),
+  avatar: text("avatar"),
+  color: text("color").notNull().default("#6366f1"),
+  updatedAt: integer("updated_at").notNull(),
+});

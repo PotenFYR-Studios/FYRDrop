@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, humanSize, isHttpUrl, type GroupSummary, type Item, type UserProfile } from "../api";
+import { api, humanSize, isHttpUrl, type GroupSummary, type Item, type RemoteUser, type UserProfile } from "../api";
 import { Btn, Input, Label, Modal, useToast } from "../ui";
 import { Icon } from "../icons";
 import { mimeIcon } from "../icons";
@@ -66,6 +66,7 @@ function ScopeRow({
   value,
   people,
   groups,
+  remote,
   onChange,
 }: {
   label: string;
@@ -73,6 +74,7 @@ function ScopeRow({
   value: { scope: Scope; users: string[]; groups: string[] };
   people: UserProfile[];
   groups: GroupSummary[];
+  remote: RemoteUser[];
   onChange: (v: { scope: Scope; users: string[]; groups: string[] }) => void;
 }) {
   const toggle = (id: string) => {
@@ -154,6 +156,25 @@ function ScopeRow({
               );
             })
           )}
+          {remote.map((r) => {
+            const on = value.users.includes(r.id);
+            return (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() =>
+                  onChange({ ...value, users: on ? value.users.filter((x) => x !== r.id) : [...value.users, r.id] })
+                }
+                aria-pressed={on}
+                className={`rounded-full border px-2.5 py-1 text-[11px] transition ${
+                  on ? "border-cyan-500 bg-cyan-500/20 text-white" : "border-[#2a3247] text-slate-400 hover:text-slate-200"
+                }`}
+                title={`Account on ${r.nodeName}`}
+              >
+                {r.name} <span className="text-[9px] opacity-70">@{r.nodeName}</span>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
@@ -164,6 +185,7 @@ function ScopeRow({
 export function AccessPicker({ value, onChange }: { value: AccessState; onChange: (v: AccessState) => void }) {
   const [people, setPeople] = useState<UserProfile[]>([]);
   const [groups, setGroups] = useState<GroupSummary[]>([]);
+  const [remote, setRemote] = useState<RemoteUser[]>([]);
   useEffect(() => {
     api
       .allUsers()
@@ -173,12 +195,16 @@ export function AccessPicker({ value, onChange }: { value: AccessState; onChange
       .groups()
       .then((r) => setGroups(r.groups))
       .catch(() => {});
+    api
+      .remoteUsers()
+      .then((r) => setRemote(r.users))
+      .catch(() => {});
   }, []);
   return (
     <div className="space-y-2">
-      <ScopeRow label="Read" hint="Who can view and download" value={value.read} people={people} groups={groups} onChange={(v) => onChange({ ...value, read: v })} />
-      <ScopeRow label="Write" hint="Who can edit notes and rename" value={value.write} people={people} groups={groups} onChange={(v) => onChange({ ...value, write: v })} />
-      <ScopeRow label="Delete" hint="Who can remove this item" value={value.delete} people={people} groups={groups} onChange={(v) => onChange({ ...value, delete: v })} />
+      <ScopeRow label="Read" hint="Who can view and download" value={value.read} people={people} groups={groups} remote={remote} onChange={(v) => onChange({ ...value, read: v })} />
+      <ScopeRow label="Write" hint="Who can edit notes and rename" value={value.write} people={people} groups={groups} remote={remote} onChange={(v) => onChange({ ...value, write: v })} />
+      <ScopeRow label="Delete" hint="Who can remove this item" value={value.delete} people={people} groups={groups} remote={remote} onChange={(v) => onChange({ ...value, delete: v })} />
     </div>
   );
 }
