@@ -5,7 +5,7 @@ import { db } from "../db";
 import { auditLog, users } from "../db/schema";
 import { publish } from "../lib/events";
 import { encryptString } from "../lib/crypto";
-import { forgetInitialPassword } from "../lib/bootstrap";
+import { forgetInitialPassword, currentPin } from "../lib/bootstrap";
 import {
   createSession,
   setSessionCookie,
@@ -285,6 +285,22 @@ authRoutes.post("/logout", (c) => {
   return c.json({ ok: true });
 });
 
+/** Owner view of instance settings, including the current PIN so it can be shown and rotated. */
+authRoutes.get("/settings", requireOwner, (c) => {
+  const s = getSettings();
+  if (!s) return c.json({ error: "Setup required." }, 409);
+  return c.json({
+    appName: s.appName,
+    ownerName: s.ownerName,
+    maxUploadMb: s.maxUploadMb,
+    pin: currentPin() ?? "",
+    registrationOpen: s.registrationOpen === 1,
+    ipWhitelist: s.ipWhitelist,
+    ipWhitelistEnabled: s.ipWhitelistEnabled === 1,
+    storageQuotaMb: s.storageQuotaMb,
+  });
+});
+
 /** Instance settings (owner only): name, limits, PIN rotation, whitelist, registration. */
 authRoutes.post("/settings", requireOwner, async (c) => {
   const s = getSettings();
@@ -329,7 +345,6 @@ authRoutes.post("/settings", requireOwner, async (c) => {
   if (body.newPin !== undefined) {
     const np = String(body.newPin).trim();
     if (!PIN_RE.test(np)) return c.json({ error: "New PIN must be 4-10 digits." }, 400);
-    if (!(await verifySecret(String(body.currentPin ?? "").trim(), s.pinHash))) return c.json({ error: "Current PIN is wrong." }, 403);
     patch.pinHash = await hashSecret(np);
     patch.pinEnc = encryptString(np);
   }

@@ -203,6 +203,8 @@ export const clusterNodes = sqliteTable("cluster_nodes", {
   fingerprint: text("fingerprint").notNull().default(""),
   /** linked | needs-repair */
   status: text("status").notNull().default("linked"),
+  /** Peer instance PIN, sealed with the local key, shown to the owner after linking. */
+  pinEnc: text("pin_enc").notNull().default(""),
   linkedAt: integer("linked_at"),
   lastSeenAt: integer("last_seen_at"),
   lastStatus: text("last_status").notNull().default("never"),

@@ -158,6 +158,7 @@ ALTER TABLE cluster_nodes ADD COLUMN public_key TEXT NOT NULL DEFAULT '';
 ALTER TABLE cluster_nodes ADD COLUMN fingerprint TEXT NOT NULL DEFAULT '';
 ALTER TABLE cluster_nodes ADD COLUMN status TEXT NOT NULL DEFAULT 'linked';
 ALTER TABLE cluster_nodes ADD COLUMN linked_at INTEGER;
+ALTER TABLE cluster_nodes ADD COLUMN pin_enc TEXT NOT NULL DEFAULT '';
 ALTER TABLE share_links ADD COLUMN pin_hash TEXT;
 ALTER TABLE share_links ADD COLUMN note TEXT;
 ALTER TABLE settings ADD COLUMN ip_whitelist TEXT NOT NULL DEFAULT '';

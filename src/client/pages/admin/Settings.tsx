@@ -31,7 +31,8 @@ export default function AdminSettings() {
   const [saveBusy, setSaveBusy] = useState(false);
 
   // pin
-  const [currentPin, setCurrentPin] = useState("");
+  const [oldPin, setOldPin] = useState("");
+  const [showOldPin, setShowOldPin] = useState(false);
   const [newPin, setNewPin] = useState("");
   const [pinBusy, setPinBusy] = useState(false);
 
@@ -44,11 +45,12 @@ export default function AdminSettings() {
 
   const reload = useCallback(() => {
     api
-      .status()
+      .ownerSettings()
       .then((s) => {
         setAppName(s.appName);
         setOwnerName(s.ownerName);
         setMaxUploadMb(s.maxUploadMb);
+        setOldPin(s.pin || "");
       })
       .catch((e) => push("err", e.message ?? "Failed to load settings"));
     api
@@ -82,19 +84,19 @@ export default function AdminSettings() {
   };
 
   const changePin = async () => {
-    if (!/^\d{4,10}$/.test(currentPin) || !/^\d{4,10}$/.test(newPin)) {
+    if (!/^\d{4,10}$/.test(newPin)) {
       push("err", "PINs must be 4-10 digits");
       return;
     }
-    if (currentPin === newPin) {
+    if (oldPin && oldPin === newPin) {
       push("err", "The new PIN must differ from the current one");
       return;
     }
     setPinBusy(true);
     try {
-      await api.saveSettings({ currentPin, newPin });
+      await api.saveSettings({ newPin });
+      setOldPin(newPin);
       push("ok", "PIN changed. Paired devices keep access; new devices need the new PIN.");
-      setCurrentPin("");
       setNewPin("");
     } catch (e: any) {
       push("err", e.message ?? "PIN change failed");
@@ -183,14 +185,15 @@ export default function AdminSettings() {
           <div className="space-y-3">
             <div>
               <Label>Current PIN</Label>
-              <Input
-                type="password"
-                value={currentPin}
-                onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, "").slice(0, 10))}
-                placeholder="••••"
-                inputMode="numeric"
-                autoComplete="current-password"
-              />
+              <div className="flex items-center gap-2 rounded-xl border border-[#2a3247] bg-[#12161f] px-3 py-2">
+                <span className="mono flex-1 text-sm tracking-[0.3em] text-slate-200">{showOldPin ? oldPin : "•".repeat(Math.max(4, oldPin.length))}</span>
+                <button type="button" onClick={() => setShowOldPin((v) => !v)} className="rounded-lg p-1 text-slate-500 hover:text-slate-200" title={showOldPin ? "Hide PIN" : "Show PIN"}>
+                  <Icon name={showOldPin ? "eyeOff" : "eye"} size={14} />
+                </button>
+                <button type="button" onClick={() => void navigator.clipboard.writeText(oldPin).then(() => push("ok", "PIN copied"))} className="rounded-lg p-1 text-slate-500 hover:text-slate-200" title="Copy PIN">
+                  <Icon name="copy" size={14} />
+                </button>
+              </div>
             </div>
             <div>
               <Label>New PIN</Label>

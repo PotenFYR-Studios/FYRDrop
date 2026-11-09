@@ -260,6 +260,10 @@ export default function Cluster() {
                     <span>{n.lastItemCount} items</span>
                     <span>·</span>
                     <span>{humanSize(n.lastStorageBytes)}</span>
+                    <span>·</span>
+                    <span title="Instance PIN of this peer (shared over the sealed link)">
+                      PIN <span className="mono text-amber-300">{n.pin || "not shared"}</span>
+                    </span>
                   </div>
                 </div>
                 <div className="flex gap-2">

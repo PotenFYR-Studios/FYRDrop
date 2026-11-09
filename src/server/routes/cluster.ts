@@ -24,6 +24,7 @@ import {
 import { discovered, scanNetwork, advertisedUrl } from "../lib/discovery";
 import { requireOwner } from "../lib/auth";
 import { getSettings } from "../lib/settings";
+import { currentPin } from "../lib/bootstrap";
 import { isHttpUrl, ITEM_TYPES } from "../lib/content";
 import { rateLimit } from "../lib/security";
 import { auditRequest, type LogInput } from "../lib/audit";
@@ -123,8 +124,14 @@ function peerKey(node: typeof clusterNodes.$inferSelect): Buffer | null {
 }
 
 function serializeNode(n: typeof clusterNodes.$inferSelect) {
-  const { secret: _secret, ...rest } = n;
-  return { ...rest, needsRepair: !n.publicKey };
+  const { secret: _secret, pinEnc, ...rest } = n;
+  let pin = "";
+  try {
+    pin = pinEnc ? decryptString(pinEnc) : "";
+  } catch {
+    pin = "";
+  }
+  return { ...rest, pin, needsRepair: !n.publicKey };
 }
 
 interface PendingIn {
@@ -399,7 +406,10 @@ clusterRoutes.post("/outgoing/:nodeId/approve", async (c) => {
   }
   try {
     const fresh = db.select().from(clusterNodes).where(eq(clusterNodes.id, out.nodeId)).limit(1).get();
-    if (fresh) await syncClusterUsers(fresh, key);
+    if (fresh) {
+      await syncClusterUsers(fresh, key);
+      await syncPeerPin(fresh, key);
+    }
   } catch {
     /* directory is best effort */
   }
@@ -462,6 +472,7 @@ clusterRoutes.post("/refresh", async (c) => {
           .where(eq(clusterNodes.id, node.id))
           .run();
         await syncClusterUsers(node, key);
+        await syncPeerPin(node, key);
         results.push({ id: node.id, ok: true });
       } catch (err) {
         db.update(clusterNodes).set({ lastStatus: "unreachable", lastSeenAt: Date.now() }).where(eq(clusterNodes.id, node.id)).run();
@@ -803,6 +814,18 @@ function remoteVisible(row: typeof items.$inferSelect, key: string) {
   return false;
 }
 
+/** Pull the peer's instance PIN (sealed) so the owner can see it on the Cluster page. */
+export async function syncPeerPin(node: typeof clusterNodes.$inferSelect, key: Buffer) {
+  try {
+    const data = (await sealedFetch(node, key, "GET", "/api/cluster-node/pin", undefined, 8_000)) as any;
+    if (typeof data?.pin === "string" && /^\d{4,10}$/.test(data.pin)) {
+      db.update(clusterNodes).set({ pinEnc: encryptString(data.pin) }).where(eq(clusterNodes.id, node.id)).run();
+    }
+  } catch {
+    /* older peer or unreachable */
+  }
+}
+
 /** Pull the account directory from a peer and store it for access pickers. */
 export async function syncClusterUsers(node: typeof clusterNodes.$inferSelect, key: Buffer) {
   try {
@@ -852,6 +875,13 @@ clusterNodeRoutes.get("/manifest", requireLinked, async (c) => {
       storage: { bytes: localStorageBytes(), count, quotaBytes: quotaBytes(), freeBytes: availableBytes() },
     }),
   );
+});
+
+clusterNodeRoutes.get("/pin", requireLinked, async (c) => {
+  const { key } = c.get("clusterAuth") as any;
+  const pin = currentPin() ?? "";
+  if (!pin) return c.json(seal(key, { pin: "" }));
+  return c.json(seal(key, { pin }));
 });
 
 clusterNodeRoutes.get("/users", requireLinked, async (c) => {

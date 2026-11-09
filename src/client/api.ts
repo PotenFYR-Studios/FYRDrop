@@ -197,6 +197,7 @@ export interface ClusterNode {
   publicKey: string;
   fingerprint: string;
   status: string;
+  pin: string;
   linkedAt: number | null;
   lastSeenAt: number | null;
   lastStatus: string;
@@ -413,6 +414,7 @@ export const api = {
   changePassword: (currentPassword: string, newPassword: string) =>
     req<{ ok: boolean; signedOut: number }>("/api/auth/account/password", post({ currentPassword, newPassword })),
 
+  ownerSettings: () => req<{ appName: string; ownerName: string; maxUploadMb: number; pin: string; registrationOpen: boolean; ipWhitelist: string; ipWhitelistEnabled: boolean; storageQuotaMb: number }>("/api/auth/settings"),
   saveSettings: (p: Record<string, unknown>) => req("/api/auth/settings", post(p)),
 
   // profile
