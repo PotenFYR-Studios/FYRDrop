@@ -517,12 +517,6 @@ export const api = {
   saveConfig: (p: Record<string, unknown>) => req<{ ok: boolean; config: any; restartRequired: string[] }>("/api/admin/config", post(p)),
   restartServer: () => req<{ ok: boolean; restarting: boolean }>("/api/admin/restart", post()),
 
-  // federation (owner)
-  peers: () => req<{ peers: any[] }>("/api/federation/peers"),
-  addPeer: (name: string, baseUrl: string, token: string) => req<{ peer: any }>("/api/federation/peers", post({ name, baseUrl, token })),
-  deletePeer: (id: string) => req(`/api/federation/peers/${id}`, { method: "DELETE" }),
-  sendToPeer: (peerId: string, itemId: string) => req(`/api/federation/peers/${peerId}/send/${itemId}`, post()),
-  broadcast: (itemId: string) => req(`/api/federation/broadcast/${itemId}`, post()),
 
   // overview (all signed-in users)
   overview: () => req<any>("/api/overview"),

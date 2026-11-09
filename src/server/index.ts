@@ -13,7 +13,6 @@ import { sessionRoutes } from "./routes/sessions";
 import { adminRoutes } from "./routes/admin";
 import { shareRoutes, eventRoutes } from "./routes/public";
 import { webrtcRoutes, sweepPresence } from "./routes/webrtc";
-import { federationRoutes, inboundRoutes } from "./routes/federation";
 import { userRoutes } from "./routes/users";
 import { groupRoutes } from "./routes/groups";
 import { remoteRoutes } from "./routes/remote";
@@ -91,9 +90,6 @@ app.route("/api/webrtc", webrtcRoutes);
 app.route("/api/cluster-node", clusterNodeRoutes);
 app.route("/api/overview", publicClusterRoutes);
 app.route("/api/cluster", clusterRoutes);
-// inbound must be mounted BEFORE the owner-guarded federation routes
-app.route("/api/federation", inboundRoutes);
-app.route("/api/federation", federationRoutes);
 
 app.onError((err, c) => {
   // Never leak stack traces / internals to clients (OWASP A05).

@@ -39,7 +39,6 @@ const TOC: [string, IconName][] = [
   ["Covert tools for DLP-restricted networks", "shield"],
   ["Certificates", "lock"],
   ["Admin & security", "shieldCheck"],
-  ["Federation", "globe"],
   ["FAQ", "help"],
 ];
 
@@ -171,17 +170,7 @@ export default function Help() {
           </ul>
         </Section>
 
-        <Section icon="globe" title="Federation between FYRDrop instances">
-          <p>
-            Instances can peer with each other. Add a peer by name, base URL and a shared token; once connected you can
-            <span className="text-slate-200"> send any item</span> to a peer or <span className="text-slate-200">broadcast</span> it
-            to all peers at once. The item is re-uploaded on the remote side and stays under that instance's rules
-            (expiry, retention, blocks).
-          </p>
-          <p className="text-slate-400">
-            Federation is one-directional per token - revoke a peer to cut it off immediately.
-          </p>
-        </Section>
+        
 
         <Section icon="help" title="FAQ">
           <div className="space-y-2">
