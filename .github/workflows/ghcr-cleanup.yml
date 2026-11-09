@@ -1,0 +1,50 @@
+name: GHCR cleanup
+
+# Every push to main moves the `main` / `latest` tags to a new image and leaves
+# the previous one untagged in ghcr.io. This removes those leftovers.
+#
+# Images are multi-arch: a tagged image index points at untagged per-platform
+# manifests (and build attestations). ghcr-cleanup-action understands that and
+# never deletes a manifest a tagged image still uses, so `docker pull` of any
+# tag keeps working. Tagged images (main, latest, versions) are never deleted.
+#
+# Runs weekly, after each image publish, or by hand (dry run by default).
+
+on:
+  schedule:
+    - cron: "17 3 * * 0"
+  workflow_run:
+    workflows: ["Docker Image", "Release"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only report what would be deleted"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ghcr-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Remove untagged, orphaned and broken images
+        # v1.2.2, pinned to its commit
+        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          delete-ghost-images: true
+          delete-partial-images: true
+          delete-orphaned-images: true
+          # Keep a few recent untagged builds so a just-replaced `main` can still be pulled by digest.
+          keep-n-untagged: 3
+          validate: true
+          dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}

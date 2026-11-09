@@ -96,6 +96,8 @@ bun run start        # serve API + built client on :3000
 
 Multi-stage build on `oven/bun` (debian), multi-arch (`linux/amd64`, `linux/arm64`), published to GHCR on every push to `main` and every `v*` tag. The runtime stage installs **production dependencies only** (no Vite/TypeScript), plus `tini` and `curl` for the health check.
 
+The **GHCR cleanup** workflow (`.github/workflows/ghcr-cleanup.yml`) removes the untagged images each push to `main` leaves behind - weekly and after every publish - while keeping the newest 3 and never touching a manifest that a tagged multi-arch image still uses. Run it by hand from the Actions tab; manual runs are a dry run unless you untick it.
+
 Every variable below except `DATA_DIR` and `NODE_ENV` can also be set in **Admin → Settings → System configuration** (stored in `DATA_DIR/config.json`). A variable that is set wins over the saved value; the admin page shows which variable is in charge and locks that field. These settings are read when the server starts: saving one marks it **restart pending** until the next start, and the page offers **Restart now**.
 
 | Env var | Admin field | Default | Purpose |
