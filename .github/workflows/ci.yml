@@ -20,15 +20,23 @@ jobs:
       - name: Build client
         run: bun run build
       - name: Smoke test server
+        env:
+          TLS_ENABLED: "0"
+          DATA_DIR: ${{ runner.temp }}/fyrdrop-ci
+          PORT: "3000"
         run: |
-          bun src/server/index.ts &
+          bun src/server/index.ts > server.log 2>&1 &
           SERVER_PID=$!
+          trap "kill $SERVER_PID 2>/dev/null || true" EXIT
+          ready=""
           for i in $(seq 1 30); do
-            curl -sf http://localhost:3000/health && break || sleep 1
+            if curl -sf http://localhost:3000/health > /dev/null; then ready=1; break; fi
+            sleep 1
           done
-          curl -sf http://localhost:3000/health | grep -q '"ok":true' || (echo "health check failed" && exit 1)
-          curl -sf http://localhost:3000/api/auth/status | grep -q 'needsSetup' || (echo "status check failed" && exit 1)
-          kill $SERVER_PID
+          if [ -z "$ready" ]; then echo "health check failed"; cat server.log; exit 1; fi
+          curl -sf http://localhost:3000/health | grep -q '"ok":true' || (echo "health payload wrong" && cat server.log && exit 1)
+          curl -sf http://localhost:3000/api/auth/status | grep -q 'needsSetup' || (echo "status check failed" && cat server.log && exit 1)
+          curl -sf http://localhost:3000/ > /dev/null || (echo "SPA shell missing" && exit 1)
 
   docker:
     runs-on: ubuntu-latest

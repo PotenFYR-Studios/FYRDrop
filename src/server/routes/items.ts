@@ -5,18 +5,19 @@ import crypto from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 import { db, dirs } from "../db";
-import { items, shareLinks, userPins } from "../db/schema";
+import { items, shareLinks, userPins, clusterNodes } from "../db/schema";
 import { makeThumbnail, makeThumbnailFromBuffer, deleteThumb, thumbPath } from "../lib/thumbs";
 import { storedFileName } from "../lib/files";
 import { requireSession, type SessionCtx } from "../lib/auth";
 import { publish } from "../lib/events";
-import { encryptString, decryptString, encryptPartsToFile, decryptedWebStream } from "../lib/crypto";
+import { encryptString, decryptString, encryptPartsToFile, decryptedWebStream, readDecrypted } from "../lib/crypto";
 import { writeStoredFile, pathForRef, deleteStoredFile, unitDirForWrite, makeRef, storageRefusal, markUsageDirty } from "../lib/storage";
 import { maxUploadBytes } from "../lib/settings";
 import { userContentHeaders, ITEM_TYPES } from "../lib/content";
 import { hashSecret, PIN_RE } from "../lib/secrets";
 import { auditRequest } from "../lib/audit";
 import { ensureDefaultGroup, groupAccessSet, isGroupMember } from "../lib/groups";
+import { getIdentity, signRequest, seal, open } from "../lib/cluster";
 import type { AppEnv } from "../lib/net";
 
 export const itemRoutes = new Hono<AppEnv>();
@@ -619,6 +620,72 @@ itemRoutes.post("/:id/quick-link", async (c) => {
   publish({ scope: "items", action: "shared", id: row.id });
   auditRequest(c, "share.quick", true, `Created a quick link for "${row.name}"`, { target: row.name, meta: { expiresInDays: 7 } });
   return c.json({ token, url: `/s/${token}`, reused: false }, 201);
+});
+
+
+/** Sealed request to a linked peer: AES-256-GCM body plus an HMAC signature. */
+async function peerCall(node: typeof clusterNodes.$inferSelect, method: "GET" | "POST", path: string, payload?: any, timeoutMs = 20_000) {
+  const key = Buffer.from(decryptString(node.secret), "base64");
+  const body = payload === undefined ? "" : JSON.stringify(seal(key, payload));
+  const headers: Record<string, string> = { ...signRequest(key, getIdentity().id, method, path, body) };
+  if (body) headers["content-type"] = "application/json";
+  const res = await fetch(`${node.baseUrl}${path}`, { method, headers, body: body || undefined, redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
+  const text = await res.text();
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      msg = String(JSON.parse(text)?.error ?? msg);
+    } catch {
+      /* not json */
+    }
+    throw new Error(msg);
+  }
+  return text ? open(key, JSON.parse(text)) : null;
+}
+
+/** Place a copy of an item on the linked node with the most free space. */
+itemRoutes.post("/:id/replicate", async (c) => {
+  const row = load(c.req.param("id"));
+  const session = c.get("session");
+  if (!row || !visibleTo(row, session)) return c.json({ error: "Not found." }, 404);
+  if (!canManage(row, session)) return c.json({ error: "Only the owner or uploader can replicate this." }, 403);
+  const nodes = db.select().from(clusterNodes).all().filter((n) => n.publicKey && n.status === "linked");
+  if (nodes.length === 0) return c.json({ error: "No linked cluster instances." }, 409);
+  const need = row.storedName ? row.size : 4096;
+  const candidates: { node: typeof nodes[number]; free: number }[] = [];
+  for (const node of nodes) {
+    try {
+      const manifest = (await peerCall(node, "GET", "/api/cluster-node/manifest", undefined, 8_000)) as any;
+      candidates.push({ node, free: Number(manifest?.storage?.freeBytes ?? -1) });
+    } catch {
+      /* unreachable peers are skipped */
+    }
+  }
+  if (candidates.length === 0) return c.json({ error: "No peer answered." }, 502);
+  candidates.sort((a, b) => b.free - a.free);
+  const pick = candidates.find((x) => x.free < 0 || x.free >= Math.ceil(need * 1.15));
+  if (!pick) return c.json({ error: "No linked instance has enough free space for this item." }, 507);
+  const item = row;
+  let fileData: string | undefined;
+  if (item.storedName) {
+    const fp = pathForRef(item.storedName);
+    if (!fs.existsSync(fp)) return c.json({ error: "Stored file missing." }, 410);
+    if (item.size > 64 * 1024 * 1024) return c.json({ error: "File too large for cluster replication (max 64 MB)." }, 413);
+    fileData = readDecrypted(fp).toString("base64");
+  }
+  try {
+    const data = (await peerCall(
+      pick.node,
+      "POST",
+      "/api/cluster-node/push",
+      { item: { type: item.type, name: item.name, mime: item.mime, size: item.size, content: item.content ? decryptString(item.content) : null, fileData, uploadedBy: item.uploadedBy } },
+      300_000,
+    )) as any;
+    auditRequest(c, "cluster.placed", true, `Placed "${item.name}" on ${pick.node.name}`, { target: item.name, meta: { node: pick.node.name, freeBytes: pick.free } });
+    return c.json({ ok: true, node: { id: pick.node.id, name: pick.node.name }, remoteId: data?.id, freeBytes: pick.free });
+  } catch (err) {
+    return c.json({ error: String(err).slice(0, 240) }, 502);
+  }
 });
 
 /* ------------------------------- Share links ------------------------------ */

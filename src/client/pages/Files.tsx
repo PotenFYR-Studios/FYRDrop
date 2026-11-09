@@ -117,6 +117,15 @@ export default function Files() {
     void reload();
   };
 
+  const replicate = async (it: Item) => {
+    try {
+      const r = await api.replicateItem(it.id);
+      push("ok", `Copy placed on ${r.node.name}`);
+    } catch (e: any) {
+      push("err", e?.message ?? "Could not place a copy");
+    }
+  };
+
   const cancelUpload = (jobId: string) => {
     jobsRef.current.get(jobId)?.abort();
   };
@@ -330,6 +339,11 @@ export default function Files() {
                 {it.canManage && (
                   <Btn size="sm" variant="soft" onClick={() => setAccessItem(it)}>
                     <Icon name="shield" size={14} /> Access
+                  </Btn>
+                )}
+                {it.canManage && (
+                  <Btn size="sm" variant="soft" onClick={() => void replicate(it)} ariaLabel="Place a copy on the emptiest cluster node" title="Place a copy on the emptiest cluster node">
+                    <Icon name="globe" size={14} />
                   </Btn>
                 )}
                 {it.canManage && it.type !== "url" && (
