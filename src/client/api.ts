@@ -583,8 +583,8 @@ export const api = {
   storage: () => req<any>("/api/admin/storage"),
   cleanup: (mode: "expired" | "orphans" | "all") => req<any>("/api/admin/cleanup", post({ mode })),
   security: (q?: string) => req<any>(`/api/admin/security${q ? `?q=${encodeURIComponent(q)}` : ""}`),
-  config: () => req<{ config: any; restartFields: string[] }>("/api/admin/config"),
-  saveConfig: (p: Record<string, unknown>) => req<{ ok: boolean; config: any; restartRequired: string[] }>("/api/admin/config", post(p)),
+  config: () => req<ConfigState>("/api/admin/config"),
+  saveConfig: (p: Record<string, unknown>) => req<ConfigState & { ok: boolean; restartRequired: string[]; overriddenByEnv: string[] }>("/api/admin/config", post(p)),
   restartServer: () => req<{ ok: boolean; restarting: boolean }>("/api/admin/restart", post()),
 
 
@@ -779,6 +779,27 @@ export interface ReplicationState {
   report: ReplicationReport | null;
   summary: { eligible: number; protected: number; under: number; over: number; tooLarge: number; maxCopies: number };
   nodes: { id: string; name: string; replicas: number; bytes: number; lastSeenAt: number | null; status: string }[];
+}
+export interface ConfigField {
+  key: string;
+  label: string;
+  group: string;
+  help: string;
+  env: string[];
+  restart: boolean;
+  secret: boolean;
+  value: unknown;
+  isSet?: boolean;
+  envOverride: { name: string; value: string } | null;
+  pending: boolean;
+}
+export interface ConfigState {
+  config: Record<string, unknown>;
+  interfaces: { name: string; address: string }[];
+  restartFields: string[];
+  fields: ConfigField[];
+  envOnly: { env: string; label: string; help: string; value: string }[];
+  pendingRestart: string[];
 }
 export interface AppNotification {
   id: number;

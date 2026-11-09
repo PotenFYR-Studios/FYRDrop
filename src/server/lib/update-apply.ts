@@ -65,7 +65,13 @@ async function main() {
 
   // Process managers restart the service themselves; only spawn when nothing
   // else will (plain terminal, nohup, bun run start).
-  const managed = !!process.env.INVOCATION_ID || !!process.env.FYRDROP_MANAGED || !!process.env.DYNO;
+  let savedManaged = false;
+  try {
+    savedManaged = JSON.parse(fs.readFileSync(path.join(data, "config.json"), "utf8"))?.managedByProcessManager === true;
+  } catch {
+    /* no config file */
+  }
+  const managed = !!process.env.INVOCATION_ID || !!process.env.FYRDROP_MANAGED || !!process.env.DYNO || savedManaged;
   if (!managed) {
     try {
       const out = fs.openSync(path.join(updateDir, "server.log"), "a");

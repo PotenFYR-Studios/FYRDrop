@@ -5,9 +5,9 @@ import { clusterNodes, items, sessions, users, certs, shareLinks } from "../db/s
 import { requireSession, isOwner } from "../lib/auth";
 import { getIdentity, keyFingerprint } from "../lib/cluster";
 import { availableBytes, listUnits, localStorageBytes } from "../lib/storage";
-import { readConfig } from "../lib/config";
 import { getSettings } from "../lib/settings";
 import type { AppEnv } from "../lib/net";
+import { effectiveNetworkMode, effectivePort, effectiveTlsCommonName, effectiveTtlDays } from "../lib/config";
 
 /**
  * Read-only overview available to every signed-in user: cluster identity,
@@ -57,6 +57,6 @@ publicClusterRoutes.get("/", (c) => {
 
 /** Public-safe system configuration (no secrets) used by the Profile page. */
 publicClusterRoutes.get("/system", (c) => {
-  const conf = readConfig();
-  return c.json({ networkMode: conf.networkMode, port: conf.port, tlsCommonName: conf.tlsCommonName, sessionTtlDays: conf.sessionTtlDays });
+  // What the server is running with, not what is saved for the next restart.
+  return c.json({ networkMode: effectiveNetworkMode(), port: effectivePort(), tlsCommonName: effectiveTlsCommonName(), sessionTtlDays: effectiveTtlDays() });
 });

@@ -7,6 +7,7 @@ import { db } from "../db";
 import { kv } from "../db/schema";
 import { encryptString, decryptString } from "./crypto";
 import { logEvent } from "./audit";
+import { effectiveMailOutbox } from "./config";
 
 /**
  * Outgoing mail (password reset, verification codes, notifications).
@@ -16,7 +17,7 @@ import { logEvent } from "./audit";
  * instance; links in emails are built from it and never from the request's
  * Host header (which a client controls).
  *
- * FYRDROP_MAIL_OUTBOX=<dir> writes each message as JSON into that directory
+ * The mail outbox setting (FYRDROP_MAIL_OUTBOX) writes each message as JSON into that directory
  * instead of sending it - for development and automated tests.
  */
 
@@ -48,7 +49,7 @@ export function getMailConfig(): MailConfig {
 /** Safe view for the admin UI (no password). */
 export function publicMailConfig() {
   const { passEnc, ...rest } = getMailConfig();
-  return { ...rest, hasPassword: !!passEnc, outbox: !!process.env.FYRDROP_MAIL_OUTBOX };
+  return { ...rest, hasPassword: !!passEnc, outbox: !!effectiveMailOutbox() };
 }
 
 export function setMailConfig(patch: Partial<Omit<MailConfig, "passEnc">> & { password?: string | null }): MailConfig {
@@ -70,7 +71,7 @@ export function setMailConfig(patch: Partial<Omit<MailConfig, "passEnc">> & { pa
 
 export function validateMailConfig(cfg: MailConfig): string | null {
   if (!cfg.enabled) return null;
-  if (!process.env.FYRDROP_MAIL_OUTBOX && !cfg.host) return "SMTP host is required.";
+  if (!effectiveMailOutbox() && !cfg.host) return "SMTP host is required.";
   if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(cfg.from.replace(/^.*<([^>]+)>\s*$/, "$1"))) return "Sender address must be a valid email (e.g. FYRDrop <drop@example.com>).";
   try {
     const u = new URL(cfg.publicUrl);
@@ -139,7 +140,7 @@ export async function sendMail(mail: Mail, opts: { force?: boolean } = {}): Prom
   const cfg = getMailConfig();
   if (!opts.force && !mailEnabled()) throw new Error("Email is not configured on this instance.");
   if (!/^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/.test(mail.to)) throw new Error("Invalid recipient address.");
-  const outbox = process.env.FYRDROP_MAIL_OUTBOX;
+  const outbox = effectiveMailOutbox();
   if (outbox) {
     fs.mkdirSync(outbox, { recursive: true });
     const file = path.join(outbox, `${Date.now()}-${crypto.randomBytes(4).toString("hex")}.json`);

@@ -3,6 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { dirs } from "../db";
 import { pathForRef } from "./storage";
+import { effectiveThumbThreads } from "./config";
 
 /**
  * Thumbnails are generated one at a time through a tiny queue: libvips is
@@ -11,7 +12,7 @@ import { pathForRef } from "./storage";
  */
 
 sharp.cache(false);
-sharp.concurrency(Math.max(1, Math.min(2, Number(process.env.THUMB_THREADS ?? 1))));
+sharp.concurrency(effectiveThumbThreads());
 
 const THUMB_SIZE = 480;
 const MAX_PIXELS = 64_000_000; // ~8000×8000; rejects decompression bombs

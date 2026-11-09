@@ -96,17 +96,28 @@ bun run start        # serve API + built client on :3000
 
 Multi-stage build on `oven/bun` (debian), multi-arch (`linux/amd64`, `linux/arm64`), published to GHCR on every push to `main` and every `v*` tag. The runtime stage installs **production dependencies only** (no Vite/TypeScript), plus `tini` and `curl` for the health check.
 
-| Env var | Default | Purpose |
-| --- | --- | --- |
-| `PORT` / `SERVER_PORT` | `3000` | Listen port (wings injects `SERVER_PORT`) |
-| `DATA_DIR` | `./data` | SQLite DB, uploads, keys, certs, TLS volume |
-| `TLS_ENABLED` | `auto` | `auto`/`1` = self-signed HTTPS; `0` = plain HTTP behind a proxy |
-| `TLS_CERT_PATH` / `TLS_KEY_PATH` | - | Bring your own PEM cert/key |
-| `TLS_COMMON_NAME` | `fyrdrop.local` | CN of the auto-generated cert |
-| `SESSION_TTL_DAYS` | `30` | Device session lifetime |
-| `MAX_UPLOAD_MB` | `512` | Upload cap (also configurable in Admin → Settings) |
-| `TRUST_PROXY` | `0` | Set to `1` only behind a trusted reverse proxy so `X-Forwarded-For` is used |
-| `THUMB_THREADS` | `1` | Worker threads for thumbnail generation (keep at 1 on a Pi) |
+Every variable below except `DATA_DIR` and `NODE_ENV` can also be set in **Admin → Settings → System configuration** (stored in `DATA_DIR/config.json`). A variable that is set wins over the saved value; the admin page shows which variable is in charge and locks that field. These settings are read when the server starts: saving one marks it **restart pending** until the next start, and the page offers **Restart now**.
+
+| Env var | Admin field | Default | Purpose |
+| --- | --- | --- | --- |
+| `PORT` / `SERVER_PORT` | Port | `3000` | Listen port (wings injects `SERVER_PORT`) |
+| `HOST` | Interface | `0.0.0.0` | Bind address |
+| `DATA_DIR` | - (shown read-only) | `./data` | SQLite DB, uploads, keys, certs, TLS, `config.json` |
+| `TLS_ENABLED` | TLS mode | `auto` | `auto`/`1` = self-signed HTTPS; `0` = plain HTTP behind a proxy |
+| `TLS_CERT_PATH` / `TLS_KEY_PATH` | Certificate / key path | - | Bring your own PEM cert/key |
+| `TLS_COMMON_NAME` | TLS common name | `fyrdrop.local` | CN of the auto-generated cert |
+| `SESSION_TTL_DAYS` | Session length | `30` | Device session lifetime |
+| `TRUST_PROXY` | Trust reverse proxy headers | `0` | Set to `1` only behind a trusted reverse proxy so `X-Forwarded-For` is used |
+| `CLUSTER_URL` | Cluster address | detected LAN address | How other cluster nodes reach this one (set it in Docker with a published port) |
+| `TAILSCALE_HOSTNAME` | Tailscale host name | - | `machine.tailnet.ts.net` behind `tailscale serve`; proxy headers are trusted |
+| `CLOUDFLARE_TUNNEL_TOKEN` | Cloudflare tunnel token (write-only) | - | Behind a Cloudflare tunnel: TLS ends at the edge, proxy headers are trusted |
+| `CLOUDFLARE_HOSTNAME` | Cloudflare tunnel host name | - | Public tunnel host name shown at boot |
+| `THUMB_THREADS` | Thumbnail threads | `1` | Threads for thumbnail generation, 1-4 (keep 1 on a Pi) |
+| `UPDATE_REPO` | Update source | `PotenFYR-Studios/FYRDrop` | GitHub `owner/repo` checked for releases |
+| `FYRDROP_MANAGED` | Restarted by a process manager | off | systemd / Docker / pm2 restarts the server, so the restart helper does not start one |
+| `MAX_UPLOAD_MB` | Upload limit for a new instance | `512` | Seeds the first boot; the live limit is under Instance → Upload limit |
+| `FYRDROP_MAIL_OUTBOX` | Mail outbox directory | - | Development: write emails as JSON files instead of sending |
+| `NODE_ENV` | - | - | `production` caches the app shell |
 
 ## 🧩 Panel eggs
 

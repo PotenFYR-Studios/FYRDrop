@@ -7,7 +7,7 @@ import { db, dirs, purgeExpired } from "../db";
 import { items, sessions, certs, auditLog, clusterNodes, storageUnits, users, groups, groupMembers } from "../db/schema";
 import { requireOwner } from "../lib/auth";
 import { availableBytes, resolveUnitPath, listUnits, invalidateUnits, parseRef, usage, dirUsage } from "../lib/storage";
-import { readConfig, writeConfig } from "../lib/config";
+import { readConfig, writeConfig, describeConfig, FIELDS } from "../lib/config";
 import { decryptString } from "../lib/crypto";
 import { getSettings } from "../lib/settings";
 import { clientIp, type AppEnv } from "../lib/net";
@@ -332,51 +332,126 @@ adminRoutes.get("/config", (c) => {
   for (const [name, list] of Object.entries(os.networkInterfaces())) {
     for (const i of list ?? []) if (i.family === "IPv4" && !i.internal) interfaces.push({ name, address: i.address });
   }
+  const saved = readConfig();
+  const { cloudflareTunnelToken, ...visible } = saved;
   return c.json({
-    config: readConfig(),
+    config: { ...visible, cloudflareTunnelTokenSet: !!cloudflareTunnelToken },
     interfaces,
-    restartFields: ["port", "host", "networkMode", "tlsCommonName", "tlsCertPath", "tlsKeyPath", "hsts", "sessionTtlDays", "trustProxy"],
+    restartFields: FIELDS.filter((f) => f.restart).map((f) => f.key),
+    ...describeConfig(),
   });
 });
 
+const HOSTNAME_RE = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/i;
+
+/** Validate one field; returns [value] or an error message. */
+function cleanField(key: string, v: unknown): [unknown] | string {
+  const str = (max: number) => (typeof v === "string" ? v.trim().slice(0, max) : null);
+  const int = (lo: number, hi: number) => {
+    const n = Number(v);
+    return Number.isInteger(n) && n >= lo && n <= hi ? n : null;
+  };
+  switch (key) {
+    case "port": {
+      const n = int(1, 65535);
+      return n === null ? "Port must be 1-65535." : [n];
+    }
+    case "host": {
+      const h = str(45) ?? "";
+      if (h && !/^[0-9a-f:.]{3,45}$/i.test(h)) return "Interface must be an IPv4/IPv6 address or 0.0.0.0.";
+      return [h || "0.0.0.0"];
+    }
+    case "networkMode":
+      return ["auto", "off", "custom"].includes(String(v)) ? [v] : "TLS mode must be auto, off or custom.";
+    case "tlsCommonName":
+      return [str(80) || "fyrdrop.local"];
+    case "tlsCertPath":
+    case "tlsKeyPath":
+    case "mailOutboxDir": {
+      const s = str(400);
+      if (s === null) return "Must be text.";
+      if (s.includes("\u0000")) return "Invalid path.";
+      return [s];
+    }
+    case "hsts":
+    case "trustProxy":
+    case "showPinInLogs":
+    case "managedByProcessManager":
+      return typeof v === "boolean" ? [v] : `${key} must be true or false.`;
+    case "sessionTtlDays": {
+      const n = int(1, 365);
+      return n === null ? "Session length must be 1-365 days." : [n];
+    }
+    case "thumbThreads": {
+      const n = int(1, 4);
+      return n === null ? "Thumbnail threads must be 1-4." : [n];
+    }
+    case "defaultMaxUploadMb": {
+      const n = int(1, 1_048_576);
+      return n === null ? "Upload limit must be 1-1048576 MB." : [n];
+    }
+    case "clusterUrl": {
+      const s = (str(300) ?? "").replace(/\/+$/, "");
+      if (s) {
+        try {
+          const u = new URL(s);
+          if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error();
+          if (u.pathname !== "/" || u.search || u.hash) return "Cluster address must be just scheme, host and port, e.g. https://drop.lan:3000.";
+        } catch {
+          return "Cluster address must be a full http(s) URL.";
+        }
+      }
+      return [s];
+    }
+    case "tailscaleHostname":
+    case "cloudflareHostname": {
+      const s = (str(253) ?? "").toLowerCase();
+      if (s && !HOSTNAME_RE.test(s)) return `${key === "tailscaleHostname" ? "Tailscale" : "Cloudflare"} host name is not a valid host name.`;
+      return [s];
+    }
+    case "cloudflareTunnelToken": {
+      // null clears, empty string keeps, anything else replaces.
+      if (v === null) return [""];
+      const s = str(2000);
+      if (s === null) return "Token must be text.";
+      if (s && !/^[A-Za-z0-9+/=_.-]{20,2000}$/.test(s)) return "That does not look like a Cloudflare tunnel token.";
+      return s ? [s] : "skip" as unknown as [unknown];
+    }
+    case "updateRepo": {
+      const s = str(100) ?? "";
+      if (!/^[A-Za-z0-9_.-]{1,39}\/[A-Za-z0-9_.-]{1,100}$/.test(s)) return "Update source must look like owner/repo.";
+      return [s];
+    }
+    default:
+      return "unknown";
+  }
+}
+
 adminRoutes.post("/config", async (c) => {
-  const body = await c.req.json<any>().catch(() => null);
-  if (!body) return c.json({ error: "Invalid body." }, 400);
+  const body = await c.req.json<Record<string, unknown>>().catch(() => null);
+  if (!body || typeof body !== "object") return c.json({ error: "Invalid body." }, 400);
   const patch: Record<string, unknown> = {};
-  if (body.port !== undefined) {
-    const p = Number(body.port);
-    if (!Number.isInteger(p) || p < 1 || p > 65535) return c.json({ error: "port must be 1-65535." }, 400);
-    patch.port = p;
+  const known = new Set(FIELDS.map((f) => f.key as string));
+  for (const [key, raw] of Object.entries(body)) {
+    if (!known.has(key)) continue;
+    const r = cleanField(key, raw);
+    if ((r as unknown) === "skip") continue;
+    if (typeof r === "string") return c.json({ error: r, field: key }, 400);
+    patch[key] = r[0];
   }
-  if (typeof body.host === "string") {
-    const host = body.host.trim();
-    if (host && !/^[0-9a-f:.]{3,45}$/i.test(host)) return c.json({ error: "host must be an IPv4/IPv6 address or 0.0.0.0." }, 400);
-    patch.host = host || "0.0.0.0";
-  }
-  if (typeof body.tlsCertPath === "string") patch.tlsCertPath = body.tlsCertPath.trim().slice(0, 400);
-  if (typeof body.tlsKeyPath === "string") patch.tlsKeyPath = body.tlsKeyPath.trim().slice(0, 400);
-  if (typeof body.hsts === "boolean") patch.hsts = body.hsts;
-  if (body.networkMode !== undefined) {
-    if (!["auto", "off", "custom"].includes(body.networkMode)) return c.json({ error: "networkMode must be auto, off or custom." }, 400);
-    patch.networkMode = body.networkMode;
-  }
-  if (typeof body.tlsCommonName === "string") patch.tlsCommonName = body.tlsCommonName.trim().slice(0, 80) || "fyrdrop.local";
-  if (body.sessionTtlDays !== undefined) {
-    const d = Number(body.sessionTtlDays);
-    if (!Number.isInteger(d) || d < 1 || d > 365) return c.json({ error: "sessionTtlDays must be 1-365." }, 400);
-    patch.sessionTtlDays = d;
-  }
-  if (typeof body.trustProxy === "boolean") patch.trustProxy = body.trustProxy;
-  if (typeof body.showPinInLogs === "boolean") patch.showPinInLogs = body.showPinInLogs;
-  const next = writeConfig(patch);
-  const restartFields = ["port", "host", "networkMode", "tlsCommonName", "tlsCertPath", "tlsKeyPath", "hsts", "sessionTtlDays", "trustProxy"];
-  const restartRequired = Object.keys(patch).filter((k) => restartFields.includes(k));
-  audit(c, "config.updated", true, `System config updated: ${Object.keys(patch).join(", ")}`, {
+  const before = readConfig();
+  const changed = Object.keys(patch).filter((k) => JSON.stringify((before as any)[k]) !== JSON.stringify(patch[k]));
+  writeConfig(patch as any);
+  const view = describeConfig();
+  const restartRequired = changed.filter((k) => FIELDS.find((f) => f.key === k)?.restart);
+  const overridden = changed.filter((k) => view.fields.find((f) => f.key === k)?.envOverride);
+  audit(c, "config.updated", true, changed.length ? `System config updated: ${changed.join(", ")}` : "System config saved without changes", {
     target: "config",
     severity: restartRequired.length ? "warn" : "info",
-    meta: { changed: Object.keys(patch), restartRequired },
+    meta: { changed, restartRequired, overriddenByEnv: overridden },
   });
-  return c.json({ ok: true, config: next, restartRequired });
+  const { cloudflareTunnelToken, ...visible } = readConfig();
+  return c.json({ ok: true, config: { ...visible, cloudflareTunnelTokenSet: !!cloudflareTunnelToken }, restartRequired, overriddenByEnv: overridden, ...view });
 });
 
 adminRoutes.post("/restart", (c) => {

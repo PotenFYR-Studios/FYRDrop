@@ -5,7 +5,7 @@ import fs from "node:fs";
 import { migrate, ensureDirs, dirs } from "./db";
 import { ensureBootstrap } from "./lib/bootstrap";
 import { printBanner } from "./lib/banner";
-import { effectivePort, effectiveNetworkMode, effectiveHost, customTlsPaths, readConfig } from "./lib/config";
+import { effectivePort, effectiveNetworkMode, effectiveHost, customTlsPaths, bootConfig, effectiveTlsCommonName, effectiveHsts } from "./lib/config";
 import { authRoutes } from "./routes/auth";
 import { itemRoutes, sweepUploads } from "./routes/items";
 import { certRoutes } from "./routes/certs";
@@ -36,6 +36,8 @@ import { backfillAuditV2 } from "./lib/audit";
 import { finalizeOnBoot, currentVersion } from "./lib/update";
 import type { AppEnv } from "./lib/net";
 
+// Freeze the configuration this process runs with before anything can change the file.
+bootConfig();
 migrate();
 ensureDirs();
 backfillAuditV2();
@@ -65,7 +67,7 @@ function tlsOptions(): { cert?: string; key?: string; auto: boolean } {
   }
   if (mode === "auto") {
     fs.mkdirSync(tlsDir, { recursive: true });
-    const cn = process.env.TLS_COMMON_NAME ?? readConfig().tlsCommonName ?? "fyrdrop.local";
+    const cn = effectiveTlsCommonName();
     const gen = generateSelfSigned({ commonName: cn, organization: "FYRDrop", days: 825, keyBits: 2048, sans: ["localhost", "127.0.0.1", "::1"] });
     fs.writeFileSync(certFile, gen.certPem, "utf8");
     fs.writeFileSync(keyFile, gen.keyPem, { encoding: "utf8", mode: 0o600 });
@@ -80,7 +82,7 @@ const tlsActive = !!(tls.cert && tls.key);
 const app = new Hono<AppEnv>();
 
 // --- OWASP hardening ---
-app.use("*", securityHeaders({ hsts: tlsActive && readConfig().hsts }));
+app.use("*", securityHeaders({ hsts: tlsActive && effectiveHsts() }));
 app.use("/api/*", csrfOriginCheck());
 app.use("/api/*", ipWhitelist());
 

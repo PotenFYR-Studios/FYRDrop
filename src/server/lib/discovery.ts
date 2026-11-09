@@ -2,6 +2,7 @@ import dgram from "node:dgram";
 import os from "node:os";
 import { getIdentity, announcement, type Announcement } from "./cluster";
 import { getSettings } from "./settings";
+import { effectiveClusterUrl, effectiveNetworkMode, effectivePort } from "./config";
 
 /**
  * Local network discovery. Instances announce themselves on a multicast group
@@ -26,7 +27,7 @@ export interface DiscoveredNode extends Announcement {
 const seen = new Map<string, DiscoveredNode>();
 let socket: dgram.Socket | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
-let selfPort = Number(process.env.PORT ?? process.env.SERVER_PORT ?? 3000);
+let selfPort = effectivePort();
 
 function primaryIpv4(): string {
   for (const list of Object.values(os.networkInterfaces())) {
@@ -38,9 +39,9 @@ function primaryIpv4(): string {
 }
 
 export function advertisedUrl(): string {
-  const explicit = process.env.CLUSTER_URL?.trim();
-  if (explicit) return explicit.replace(/\/+$/, "");
-  const scheme = process.env.TLS_ENABLED === "0" || process.env.TLS_ENABLED === "false" ? "http" : "https";
+  const explicit = effectiveClusterUrl();
+  if (explicit) return explicit;
+  const scheme = effectiveNetworkMode() === "off" ? "http" : "https";
   return `${scheme}://${primaryIpv4()}:${selfPort}`;
 }
 

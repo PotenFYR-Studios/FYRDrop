@@ -5,6 +5,7 @@ import { kv, settings, users } from "../db/schema";
 import { encryptString, decryptString } from "./crypto";
 import { randomPassword } from "./secrets";
 import { invalidateSettings } from "./settings";
+import { effectiveDefaultMaxUploadMb } from "./config";
 
 /**
  * First-boot provisioning.
@@ -99,7 +100,7 @@ export function ensureBootstrap(): BootstrapResult {
       ownerName: "admin",
       pinHash: Bun.password.hashSync(pin, ARGON),
       pinEnc: encryptString(pin),
-      maxUploadMb: Number(process.env.MAX_UPLOAD_MB ?? 512),
+      maxUploadMb: effectiveDefaultMaxUploadMb(),
       createdAt: now,
       updatedAt: now,
     })

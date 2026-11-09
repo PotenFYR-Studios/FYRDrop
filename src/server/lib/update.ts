@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { dirs } from "../db";
 import { inContainer } from "./device";
+import { effectiveUpdateRepo } from "./config";
 
 /**
  * In-app updates.
@@ -17,7 +18,7 @@ import { inContainer } from "./device";
  * instead of rewriting the image from inside.
  */
 
-export const REPO = process.env.UPDATE_REPO?.trim() || "PotenFYR-Studios/FYRDrop";
+export const REPO = effectiveUpdateRepo();
 const UPDATE_DIR = () => path.join(dirs.data, "update");
 const STAGING_DIR = () => path.join(UPDATE_DIR(), "staging");
 const PENDING = () => path.join(UPDATE_DIR(), "pending.json");

@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { readConfig } from "./config";
+import { effectiveTrustProxy } from "./config";
 import { inContainer, isLoopback, isPrivateIpv4 } from "./device";
 
 /**
@@ -19,12 +19,7 @@ let trustCache: boolean | null = null;
 
 export function trustProxy(): boolean {
   if (trustCache !== null) return trustCache;
-  trustCache =
-    process.env.TRUST_PROXY === "1" ||
-    process.env.TRUST_PROXY === "true" ||
-    !!process.env.TAILSCALE_HOSTNAME?.trim() ||
-    !!process.env.CLOUDFLARE_TUNNEL_TOKEN?.trim() ||
-    readConfig().trustProxy === true;
+  trustCache = effectiveTrustProxy();
   return trustCache;
 }
 

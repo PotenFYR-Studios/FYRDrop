@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { settings } from "../db/schema";
+import { effectiveDefaultMaxUploadMb } from "./config";
 
 /**
  * In-memory cache of the single settings row. It is read on nearly every
@@ -30,6 +31,5 @@ export function invalidateSettings() {
 }
 
 export function maxUploadBytes() {
-  const envMb = Number(process.env.MAX_UPLOAD_MB ?? 512);
-  return (getSettings()?.maxUploadMb ?? envMb) * 1024 * 1024;
+  return (getSettings()?.maxUploadMb ?? effectiveDefaultMaxUploadMb()) * 1024 * 1024;
 }

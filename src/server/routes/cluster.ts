@@ -31,6 +31,7 @@ import { auditRequest, type LogInput } from "../lib/audit";
 import type { AppEnv } from "../lib/net";
 import { checkReplicas, deleteReplicas, getReplica, replicationSummary, runRebalance, setPolicy, storeReplica } from "../lib/replication";
 import { replicas } from "../db/schema";
+import { effectivePort } from "../lib/config";
 
 /* =========================================================================
  * Owner (admin) API - session authenticated, mounted at /api/cluster
@@ -618,7 +619,7 @@ clusterNodeRoutes.get("/announce", rateLimit({ name: "announce", windowMs: 60_00
     url: selfUrl(),
     publicKey: id.publicKey,
     fingerprint: keyFingerprint(id.publicKey),
-    port: Number(process.env.PORT ?? process.env.SERVER_PORT ?? 3000),
+    port: effectivePort(),
   });
 });
 

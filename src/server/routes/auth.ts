@@ -27,6 +27,7 @@ import { cleanAvatar, cleanColor } from "./users";
 import { issueTicket, secondFactorMethods } from "../lib/second-factor";
 import { notify } from "../lib/notify";
 import type { AppEnv } from "../lib/net";
+import { effectiveDefaultMaxUploadMb } from "../lib/config";
 
 export const authRoutes = new Hono<AppEnv>();
 
@@ -52,7 +53,7 @@ authRoutes.get("/status", (c) => {
     needsSetup: !s,
     appName: s?.appName ?? "FYRDrop",
     ownerName: s?.ownerName ?? "",
-    maxUploadMb: s?.maxUploadMb ?? Number(process.env.MAX_UPLOAD_MB ?? 512),
+    maxUploadMb: s?.maxUploadMb ?? effectiveDefaultMaxUploadMb(),
     registrationOpen: s ? s.registrationOpen === 1 : true,
     version: VERSION,
   });
