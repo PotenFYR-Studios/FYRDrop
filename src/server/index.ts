@@ -5,7 +5,8 @@ import fs from "node:fs";
 import { migrate, ensureDirs, dirs } from "./db";
 import { ensureBootstrap } from "./lib/bootstrap";
 import { printBanner } from "./lib/banner";
-import { effectivePort, effectiveNetworkMode, effectiveHost, customTlsPaths, bootConfig, effectiveTlsCommonName, effectiveHsts } from "./lib/config";
+import { effectivePort, effectiveHost, bootConfig, effectiveHsts, effectiveHttpRedirectPort } from "./lib/config";
+import { tlsState } from "./lib/tls";
 import { authRoutes } from "./routes/auth";
 import { itemRoutes, sweepUploads } from "./routes/items";
 import { certRoutes } from "./routes/certs";
@@ -30,7 +31,6 @@ import { sweepReplication } from "./lib/replication";
 import { sweepBackups } from "./lib/backup";
 import { startDiscovery, stopDiscovery } from "./lib/discovery";
 import { securityHeaders, csrfOriginCheck, ipWhitelist } from "./lib/security";
-import { generateSelfSigned } from "./lib/certs";
 import { startMaintenance, registerSweep, repairLegacyChunkedFiles } from "./lib/maintenance";
 import { backfillAuditV2 } from "./lib/audit";
 import { finalizeOnBoot, currentVersion } from "./lib/update";
@@ -44,40 +44,12 @@ backfillAuditV2();
 finalizeOnBoot();
 const boot = ensureBootstrap();
 
-// --- TLS (MITM protection) -------------------------------------------------
-// Priority: TLS_CERT_PATH/TLS_KEY_PATH env > config.json networkMode ("auto" |
-// "off" | "custom") > DATA_DIR/tls/{cert,key}.pem (auto-generated on first boot).
-function tlsOptions(): { cert?: string; key?: string; auto: boolean } {
-  const envCert = process.env.TLS_CERT_PATH;
-  const envKey = process.env.TLS_KEY_PATH;
-  if (envCert && envKey && fs.existsSync(envCert) && fs.existsSync(envKey)) {
-    return { cert: fs.readFileSync(envCert, "utf8"), key: fs.readFileSync(envKey, "utf8"), auto: false };
-  }
-  const custom = customTlsPaths();
-  if (custom.cert && custom.key && fs.existsSync(custom.cert) && fs.existsSync(custom.key)) {
-    return { cert: fs.readFileSync(custom.cert, "utf8"), key: fs.readFileSync(custom.key, "utf8"), auto: false };
-  }
-  const tlsDir = path.join(dirs.data, "tls");
-  const certFile = path.join(tlsDir, "cert.pem");
-  const keyFile = path.join(tlsDir, "key.pem");
-  const mode = effectiveNetworkMode();
-  if (mode === "off") return { auto: false };
-  if (fs.existsSync(certFile) && fs.existsSync(keyFile)) {
-    return { cert: fs.readFileSync(certFile, "utf8"), key: fs.readFileSync(keyFile, "utf8"), auto: true };
-  }
-  if (mode === "auto") {
-    fs.mkdirSync(tlsDir, { recursive: true });
-    const cn = effectiveTlsCommonName();
-    const gen = generateSelfSigned({ commonName: cn, organization: "FYRDrop", days: 825, keyBits: 2048, sans: ["localhost", "127.0.0.1", "::1"] });
-    fs.writeFileSync(certFile, gen.certPem, "utf8");
-    fs.writeFileSync(keyFile, gen.keyPem, { encoding: "utf8", mode: 0o600 });
-    return { cert: gen.certPem, key: gen.keyPem, auto: true };
-  }
-  return { auto: false };
-}
-
-const tls = tlsOptions();
-const tlsActive = !!(tls.cert && tls.key);
+// --- HTTP / HTTPS ----------------------------------------------------------
+// Plain HTTP is the default. HTTPS (self-signed or your own certificate) is set
+// up under Admin -> Settings -> HTTPS, or with TLS_ENABLED / TLS_CERT_PATH /
+// TLS_KEY_PATH. See lib/tls.ts for the order of precedence.
+const tls = tlsState();
+const tlsActive = tls.active;
 
 const app = new Hono<AppEnv>();
 
@@ -138,6 +110,8 @@ app.use("/assets/*", async (c, next) => {
 });
 app.use("/assets/*", serveStatic({ root: relRoot }));
 app.get("/favicon.svg", serveStatic({ root: relRoot }));
+app.get("/recover.js", serveStatic({ root: relRoot }));
+app.get("/manifest.webmanifest", serveStatic({ root: relRoot, mimes: { webmanifest: "application/manifest+json" } }));
 app.get("/favicon.ico", serveStatic({ root: relRoot, rewriteRequestPath: () => "/favicon.svg" }));
 app.all("/api/*", (c) => c.json({ error: "Not found." }, 404));
 app.get("*", (c) => {
@@ -180,12 +154,36 @@ void repairLegacyChunkedFiles();
 const scheme = tlsActive ? "https" : "http";
 const { detectHosting } = await import("./lib/hosting");
 const hosting = detectHosting(port, tlsActive);
-printBanner({ port, scheme, urls: hosting.urls, tlsNote: tls.auto ? "self-signed TLS" : undefined });
-if (boot.created) console.log(`  First boot: sign in with the PIN, then the admin account shown above.`);
+printBanner({ port, scheme, urls: hosting.urls, tlsNote: tls.source === "self-signed" ? "self-signed certificate" : tls.source === "custom" ? "your certificate" : undefined });
+if (boot.created) console.log(`  First boot: open the address above and sign in with the admin account shown in the box.`);
+if (tls.problem) console.log(`  warning: ${tls.problem}`);
+if (!tlsActive && !hosting.behindProxy) console.log(`  note: serving plain HTTP. Fine on a trusted network; for HTTPS open Admin > Settings > HTTPS (or Help > HTTP and HTTPS).`);
 for (const n of hosting.notes) console.log(`  note: ${n}`);
+
+// Optional plain-HTTP listener that only sends browsers to the HTTPS address.
+const redirectPort = effectiveHttpRedirectPort();
+let redirectServer: ReturnType<typeof Bun.serve> | null = null;
+if (tlsActive && redirectPort && redirectPort !== port) {
+  try {
+    redirectServer = Bun.serve({
+      port: redirectPort,
+      hostname: effectiveHost(),
+      fetch(req) {
+        const u = new URL(req.url);
+        // Only the host name is taken from the request; scheme and port are ours.
+        const host = /^[a-z0-9.-]+$/i.test(u.hostname) || /^\[[0-9a-f:]+\]$/i.test(u.hostname) ? u.hostname : "localhost";
+        return new Response(null, { status: 308, headers: { location: `https://${host}${port === 443 ? "" : `:${port}`}${u.pathname}${u.search}` } });
+      },
+    });
+    console.log(`  note: http://<host>:${redirectPort} redirects to HTTPS on port ${port}.`);
+  } catch (err) {
+    console.log(`  warning: could not open the HTTP redirect port ${redirectPort}: ${String(err).slice(0, 120)}`);
+  }
+}
 
 const shutdown = () => {
   stopDiscovery();
+  redirectServer?.stop();
   server.stop();
   process.exit(0);
 };

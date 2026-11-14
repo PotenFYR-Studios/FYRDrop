@@ -9,13 +9,16 @@ import { auditLog, sessions, revokedTokens, users } from "../db/schema";
 import { effectiveTtlDays } from "./config";
 import { clientIp, requestProto } from "./net";
 import { verifyApiKey, keyScopes } from "./apikeys";
+import { getSettings } from "./settings";
 
 /**
  * Stateless signed session tokens (HMAC-SHA256) - no DB write on the hot path.
  * Format: v1.<sessionId>.<expiresAtMs>.<hmac(sessionId.expiresAtMs)>
  *
  * Two-stage sign-in:
- *   1. Instance PIN  -> a "paired device" session (userId = null)
+ *   1. Device registration -> a "paired device" session (userId = null). It
+ *      asks for the instance PIN when the owner turned that on; otherwise the
+ *      page registers itself and the session is short-lived until step 2.
  *   2. Account login / registration -> the session is ROTATED into a new
  *      session bound to that user (prevents session fixation).
  * The device row in `sessions` is the registry (admin "connections" page);
@@ -80,10 +83,12 @@ export function createSession(opts: {
   reportedIp?: string;
   mac?: string;
   deviceMeta?: string;
+  /** Lifetime override; defaults to the configured session length. */
+  ttlMs?: number;
 }) {
   const sessionId = crypto.randomUUID();
   const now = Date.now();
-  const expiresAt = now + TTL_DAYS() * 86_400_000;
+  const expiresAt = now + (opts.ttlMs ?? TTL_DAYS() * 86_400_000);
   db.insert(sessions)
     .values({
       token: sessionId,
@@ -102,7 +107,7 @@ export function createSession(opts: {
     })
     .run();
   const payload = `${sessionId}.${expiresAt}`;
-  return { sessionId, token: `v1.${payload}.${hmac(payload)}` };
+  return { sessionId, expiresAt, token: `v1.${payload}.${hmac(payload)}` };
 }
 
 export function verifyToken(token: string): { sessionId: string; expiresAt: number } | null {
@@ -123,13 +128,14 @@ export function verifyToken(token: string): { sessionId: string; expiresAt: numb
   return { sessionId, expiresAt };
 }
 
-export function setSessionCookie(c: Context, token: string) {
+export function setSessionCookie(c: Context, token: string, ttlMs?: number) {
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "Lax",
+    // Secure only over HTTPS: a Secure cookie is dropped by browsers on plain HTTP.
     secure: requestProto(c) === "https",
     path: "/",
-    maxAge: TTL_DAYS() * 86_400,
+    maxAge: ttlMs ? Math.ceil(ttlMs / 1000) : TTL_DAYS() * 86_400,
   });
 }
 
@@ -229,7 +235,10 @@ function auditBlocked(c: Context, name: string) {
 /** Shared gate; returns an error Response or null when the session is acceptable. */
 function gate(c: Context, level: "device" | "user" | "owner"): Response | null {
   const session = sessionFromContext(c);
-  if (!session) return c.json({ error: "Unauthorized - enter the instance PIN.", needsPin: true }, 401);
+  if (!session) {
+    const pinOn = getSettings()?.pinEnabled === 1;
+    return c.json({ error: pinOn ? "Unauthorized - enter the instance PIN." : "This device is not signed in - reload the page.", needsPin: true }, 401);
+  }
   if (session.user?.isBlocked) {
     auditBlocked(c, session.user.name);
     return c.json({ error: "This account has been blocked by the administrator." }, 403);
@@ -253,7 +262,7 @@ function gate(c: Context, level: "device" | "user" | "owner"): Response | null {
   return null;
 }
 
-/** A paired device (PIN accepted). The account may not be chosen yet. */
+/** A registered device (PIN accepted, when one is required). The account may not be chosen yet. */
 export const requireDevice: MiddlewareHandler = async (c, next) => gate(c, "device") ?? next();
 
 /** A signed-in account (PIN + account login), password up to date. */

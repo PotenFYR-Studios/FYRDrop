@@ -112,7 +112,7 @@ export default function Profile() {
   };
 
   const revokeDevice = async (token: string, name: string) => {
-    if (!window.confirm(`Revoke "${name}"? It will need the instance PIN again.`)) return;
+    if (!window.confirm(`Revoke "${name}"? It is signed out at once and has to sign in again.`)) return;
     try {
       await api.revokeSession(token);
       push("ok", `Revoked ${name}`);
@@ -352,7 +352,7 @@ export default function Profile() {
           <div>
             <h2 className="text-sm font-semibold text-white">Your devices</h2>
             <p className="mt-1 text-xs text-slate-500">
-              Every device signed in to this account. Revoking one asks for the instance PIN next time.
+              Every device signed in to this account. Revoking one signs it out at once.
             </p>
           </div>
           {user.role === "owner" && (

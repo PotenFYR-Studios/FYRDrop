@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, humanSize, timeAgo, type ClusterDiscovered, type ClusterOverview } from "../../api";
+import { copyText, api, humanSize, timeAgo, type ClusterDiscovered, type ClusterOverview } from "../../api";
 import { Badge, Btn, Card, Empty, Input, Label, PageHeader, Spinner, StatCard, useToast } from "../../ui";
 import { Icon } from "../../icons";
 import ReplicationCard from "../../components/ReplicationCard";
@@ -263,7 +263,7 @@ export default function Cluster() {
                     <span>{humanSize(n.lastStorageBytes)}</span>
                     <span>·</span>
                     <span title="Instance PIN of this peer (shared over the sealed link)">
-                      PIN <span className="mono text-amber-300">{n.pin || "not shared"}</span>
+                      PIN <span className="mono text-amber-300">{n.pin || "none"}</span>
                     </span>
                   </div>
                 </div>
@@ -272,10 +272,7 @@ export default function Cluster() {
                     size="sm"
                     variant="soft"
                     onClick={() =>
-                      void navigator.clipboard
-                        .writeText(n.fingerprint)
-                        .then(() => push("ok", "Fingerprint copied"))
-                        .catch(() => push("err", "Clipboard blocked"))
+                      void copyText(n.fingerprint).then((ok) => (ok ? push("ok", "Fingerprint copied") : push("err", "Clipboard blocked")))
                     }
                     title="Copy the pair fingerprint so both admins can compare it"
                   >

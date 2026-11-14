@@ -7,7 +7,7 @@
   "id": "7f4c1b52-9a0e-4d3a-8f2e-1c6d5a9b3e01",
   "name": "FYRDrop",
   "author": "potenfyr-studios@users.noreply.github.com",
-  "description": "Self-hosted sharing hub: files, text, image gallery, self-signed certificates, P2P transfer and federation. PIN-protected, AES-256-GCM encrypted at rest.",
+  "description": "Self-hosted sharing hub: files, text, image gallery, self-signed certificates, P2P transfer and federation. Accounts with an optional instance PIN, AES-256-GCM encrypted at rest.",
   "tags": ["sharing", "files", "bun", "react"],
   "flags": [],
   "docker_images": {
@@ -54,9 +54,9 @@
     },
     {
       "name": "TLS Enabled",
-      "description": "auto = auto-generated self-signed HTTPS cert. 0 = plain HTTP (use a reverse proxy for TLS).",
+      "description": "0 = plain HTTP (default; right on a trusted network or behind a proxy). auto = HTTPS with an auto-generated self-signed certificate.",
       "env_variable": "TLS_ENABLED",
-      "default_value": "auto",
+      "default_value": "0",
       "user_viewable": true,
       "user_editable": true,
       "rules": "required|string|max:8"

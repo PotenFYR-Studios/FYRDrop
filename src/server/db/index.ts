@@ -360,6 +360,10 @@ CREATE TABLE IF NOT EXISTS replicas (
   PRIMARY KEY (item_id, node_id)
 );
 CREATE INDEX IF NOT EXISTS replicas_node_idx ON replicas (node_id);
+ALTER TABLE settings ADD COLUMN pin_enabled INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN batch_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE items ADD COLUMN batch_name TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS items_batch_idx ON items (batch_id);
 `;
 
 /** Create tables when missing (idempotent, safe on every boot). */
@@ -381,6 +385,14 @@ export function migrate() {
     sqlite.exec(
       "INSERT OR IGNORE INTO user_pins (user_id, item_id, created_at) SELECT user_id, id, created_at FROM items WHERE pinned = 1 AND user_id IS NOT NULL;" +
         "INSERT OR REPLACE INTO kv (key, value) VALUES ('migr:pins', '1');",
+    );
+  }
+  // The instance PIN became optional (off on new instances). An instance that
+  // was set up while the PIN was mandatory keeps it until the owner turns it off.
+  if (!sqlite.query("SELECT 1 FROM kv WHERE key = 'migr:pin-optional'").get()) {
+    sqlite.exec(
+      "UPDATE settings SET pin_enabled = 1 WHERE pin_hash != '';" +
+        "INSERT OR REPLACE INTO kv (key, value) VALUES ('migr:pin-optional', '1');",
     );
   }
   // Backfill: the oldest profile on the hosting machine owns the instance.

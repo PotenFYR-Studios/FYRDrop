@@ -10,9 +10,9 @@ import { effectiveDefaultMaxUploadMb } from "./config";
 /**
  * First-boot provisioning.
  *
- * - Instance PIN: generated once; hashed for login and AES-encrypted so the
- *   CLI banner can display it (a deliberate self-hosted convenience,
- *   controlled by config.showPinInLogs).
+ * - Instance PIN: optional and off on a new instance. The owner turns it on
+ *   under Admin -> Settings; it is then hashed for login and AES-encrypted so
+ *   the owner (and the CLI banner, per config.showPinInLogs) can display it.
  * - Owner account: username "admin" with a generated one-time password that
  *   is shown in the banner until the owner signs in and replaces it.
  */
@@ -82,7 +82,7 @@ export function ensureBootstrap(): BootstrapResult {
   const existing = db.select().from(settings).limit(1).get();
   if (existing) {
     ensureOwner();
-    if (!existing.pinEnc) {
+    if (existing.pinEnabled && !existing.pinEnc) {
       // Pre-upgrade installs stored only the PIN hash; rotate so the banner can show it.
       const rotated = generatePin();
       storePin(rotated);
@@ -92,14 +92,15 @@ export function ensureBootstrap(): BootstrapResult {
     return { created: false, pin: currentPin() };
   }
 
-  const pin = generatePin();
+  // A new instance has no PIN: people go straight to the account sign-in.
   const now = Date.now();
   db.insert(settings)
     .values({
       appName: "FYRDrop",
       ownerName: "admin",
-      pinHash: Bun.password.hashSync(pin, ARGON),
-      pinEnc: encryptString(pin),
+      pinHash: "",
+      pinEnc: "",
+      pinEnabled: 0,
       maxUploadMb: effectiveDefaultMaxUploadMb(),
       createdAt: now,
       updatedAt: now,
@@ -107,12 +108,13 @@ export function ensureBootstrap(): BootstrapResult {
     .run();
   invalidateSettings();
   ensureOwner();
-  return { created: true, pin };
+  return { created: true, pin: null };
 }
 
+/** The instance PIN, or null when the PIN step is turned off. */
 export function currentPin(): string | null {
   const s = db.select().from(settings).limit(1).get();
-  if (!s?.pinEnc) return null;
+  if (!s?.pinEnabled || !s.pinEnc) return null;
   try {
     return decryptString(s.pinEnc);
   } catch {
@@ -142,7 +144,7 @@ export function storePin(pin: string) {
   const s = db.select().from(settings).limit(1).get();
   if (!s) return;
   db.update(settings)
-    .set({ pinHash: Bun.password.hashSync(pin, ARGON), pinEnc: encryptString(pin), updatedAt: Date.now() })
+    .set({ pinHash: Bun.password.hashSync(pin, ARGON), pinEnc: encryptString(pin), pinEnabled: 1, updatedAt: Date.now() })
     .where(eq(settings.id, s.id))
     .run();
   invalidateSettings();

@@ -6,16 +6,18 @@ services:
     ports:
       - "3000:3000"
     environment:
-      # Built-in HTTPS with an auto-generated self-signed cert (recommended).
-      # Set TLS_ENABLED=0 when terminating TLS at a reverse proxy.
-      TLS_ENABLED: "auto"
-      TLS_COMMON_NAME: fyrdrop.local
+      # Plain HTTP on port 3000 by default. HTTPS is set up in the app under
+      # Admin -> Settings -> "HTTP & HTTPS" (self-signed or your certificate),
+      # or here: uncomment the next line for a self-signed certificate.
+      # A variable set here locks the choice on that page.
+      # TLS_ENABLED: "auto"
       SESSION_TTL_DAYS: "30"
       MAX_UPLOAD_MB: "512"
     volumes:
       - fyrdrop-data:/app/data
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:3000/health"]
+      # -k and the https fallback keep the check truthful when HTTPS is switched on.
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/health || curl -skf https://localhost:3000/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -25,8 +27,6 @@ services:
   #   image: ghcr.io/potenfyr-studios/fyrdrop:latest
   #   ports: ["3001:3000"]
   #   volumes: ["fyrdrop-data:/app/data"]
-  #   environment:
-  #     TLS_ENABLED: "0"
 
 volumes:
   fyrdrop-data:

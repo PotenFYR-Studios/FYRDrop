@@ -11,6 +11,7 @@ const count = (t: typeof items | typeof users | typeof sessions | typeof cluster
 /** Pretty CLI startup banner (box drawing) - printed on every boot. */
 export function printBanner(opts: { port: number; scheme: "http" | "https"; urls: string[]; tlsNote?: string }) {
   const conf = readConfig();
+  const pinOn = getSettings()?.pinEnabled === 1;
   const pin = conf.showPinInLogs ? currentPin() : null;
   const admin = conf.showPinInLogs ? initialAdminPassword() : null;
   const appName = getSettings()?.appName ?? "FYRDrop";
@@ -29,7 +30,7 @@ export function printBanner(opts: { port: number; scheme: "http" | "https"; urls
   console.log(`╭${"─".repeat(W + 2)}╮`);
   line(`  FYRDrop · ${appName} · v1.0.0`);
   sep();
-  line(`Instance PIN  ${pin ?? "(hidden - showPinInLogs is off)"}`);
+  line(`Instance PIN  ${!pinOn ? "off - turn it on under Admin > Settings" : pin ?? "(hidden - showPinInLogs is off)"}`);
   if (admin) {
     line(`Admin login   ${admin.username} / ${admin.password}`);
     line(`              one-time password - you must change it at first sign-in`);

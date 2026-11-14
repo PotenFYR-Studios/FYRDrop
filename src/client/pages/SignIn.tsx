@@ -485,14 +485,18 @@ export default function SignIn() {
               )}
 
               <div className="flex items-center justify-between gap-2 border-t border-[#1c2334] pt-3">
-                <span className="text-[11px] text-slate-500">Pairing: this device is unlocked with the instance PIN.</span>
-                <button
-                  onClick={() => void logout()}
-                  className="shrink-0 text-[11px] text-slate-500 transition hover:text-red-300"
-                  title="Forget this device - the PIN is needed again"
-                >
-                  Use another PIN
-                </button>
+                <span className="text-[11px] text-slate-500">
+                  {status?.pinRequired ? "Pairing: this device is unlocked with the instance PIN." : "Sign in with your account, or create one."}
+                </span>
+                {status?.pinRequired && (
+                  <button
+                    onClick={() => void logout()}
+                    className="shrink-0 text-[11px] text-slate-500 transition hover:text-red-300"
+                    title="Forget this device - the PIN is needed again"
+                  >
+                    Use another PIN
+                  </button>
+                )}
               </div>
             </div>
           </MagicCard>

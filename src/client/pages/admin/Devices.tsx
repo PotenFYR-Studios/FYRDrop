@@ -128,7 +128,7 @@ function DeviceRow({ device, onOpen, onRevoke, showAccount = true }: { device: A
         <Btn size="sm" variant="soft" onClick={onOpen} ariaLabel={`Details for ${device.deviceName}`}>
           <Icon name="eye" size={13} /> Details
         </Btn>
-        <Btn size="sm" variant="ghost" onClick={onRevoke} className="text-slate-400 hover:bg-red-500/10 hover:text-red-300" title="Revoke device (it will need the PIN again)">
+        <Btn size="sm" variant="ghost" onClick={onRevoke} className="text-slate-400 hover:bg-red-500/10 hover:text-red-300" title="Revoke device (it is signed out and has to sign in again)">
           <Icon name="power" size={13} /> Revoke
         </Btn>
       </div>
@@ -226,7 +226,7 @@ export default function Devices() {
   };
 
   const revoke = async (d: AdminDevice) => {
-    if (!window.confirm(`Revoke "${d.deviceName}"? It will need the instance PIN again.`)) return;
+    if (!window.confirm(`Revoke "${d.deviceName}"? It is signed out at once and has to sign in again.`)) return;
     try {
       await api.revokeSession(d.token);
       setDevices((list) => list.filter((x) => x.token !== d.token));
@@ -332,7 +332,7 @@ export default function Devices() {
           <Spinner size={26} />
         </div>
       ) : visible.length === 0 ? (
-        <Empty icon="smartphone" title="No devices match" hint="Pair a device with the instance PIN and it will appear here." />
+        <Empty icon="smartphone" title="No devices match" hint="Open FYRDrop on a device and it will appear here." />
       ) : grouped ? (
         <div className="space-y-4">
           {groups.map((g) => (
@@ -353,7 +353,7 @@ export default function Devices() {
                       <Icon name="alert" size={12} />
                     </span>
                     <span className="text-sm font-medium text-amber-200">Paired, no account</span>
-                    <span className="text-[11px] text-slate-500">someone entered the PIN but did not sign in</span>
+                    <span className="text-[11px] text-slate-500">opened the sign-in page but did not sign in</span>
                   </>
                 )}
                 <div className="ml-auto flex items-center gap-3 text-[11px] text-slate-500">

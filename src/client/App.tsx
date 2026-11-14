@@ -46,7 +46,7 @@ type AuthState = {
   user: UserProfile | null;
   mustChangePassword: boolean;
   refresh: () => Promise<void>;
-  /** Forget this device entirely (PIN needed next time). */
+  /** Forget this device entirely (it registers again, with the PIN when one is required). */
   logout: () => Promise<void>;
   /** Leave the account but stay paired. */
   switchAccount: () => Promise<void>;
@@ -341,7 +341,7 @@ function NotProvisioned() {
         <div className="mb-3 flex justify-center text-amber-300"><Icon name="alert" size={32} /></div>
         <h1 className="text-xl font-semibold text-white">The server isn't initialised</h1>
         <p className="mt-2 text-sm text-slate-400">
-          Start FYRDrop once so it can create the instance PIN and the owner account, then reload this page.
+          Start FYRDrop once so it can create the owner account, then reload this page.
         </p>
         <Btn className="mt-5" onClick={() => window.location.reload()}>
           <Icon name="refresh" size={15} /> Reload
@@ -366,7 +366,9 @@ function Root() {
   const logout = useCallback(async () => {
     await api.logout().catch(() => {});
     resetSync();
-    setState((s) => ({ ...s, authed: false, user: null, mustChangePassword: false }));
+    // The owner may have turned the instance PIN on or off since this page loaded.
+    const status = await api.status().catch(() => null);
+    setState((s) => ({ ...s, status: status ?? s.status, authed: false, user: null, mustChangePassword: false }));
   }, []);
 
   const switchAccount = useCallback(async () => {

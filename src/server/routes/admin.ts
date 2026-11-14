@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { and, eq, gt, isNull, lt, or, sql, like } from "drizzle-orm";
 import fs from "node:fs";
 import path from "node:path";
@@ -7,7 +7,10 @@ import { db, dirs, purgeExpired } from "../db";
 import { items, sessions, certs, auditLog, clusterNodes, storageUnits, users, groups, groupMembers } from "../db/schema";
 import { requireOwner } from "../lib/auth";
 import { availableBytes, resolveUnitPath, listUnits, invalidateUnits, parseRef, usage, dirUsage } from "../lib/storage";
-import { readConfig, writeConfig, describeConfig, FIELDS } from "../lib/config";
+import { readConfig, writeConfig, describeConfig, envOverride, effectivePort, effectiveNetworkMode, bootConfig, FIELDS } from "../lib/config";
+import { tlsState, describeCert, customPair, selfSignedPair, validatePair, saveCustomPair, regenerateSelfSigned, localNames } from "../lib/tls";
+import { requestHost, requestProto } from "../lib/net";
+import { bodyLimit } from "hono/body-limit";
 import { decryptString } from "../lib/crypto";
 import { getSettings } from "../lib/settings";
 import { clientIp, type AppEnv } from "../lib/net";
@@ -373,6 +376,10 @@ function cleanField(key: string, v: unknown): [unknown] | string {
       if (s.includes("\u0000")) return "Invalid path.";
       return [s];
     }
+    case "httpRedirectPort": {
+      const n = int(0, 65535);
+      return n === null ? "HTTP redirect port must be 0 (off) or 1-65535." : [n];
+    }
     case "hsts":
     case "trustProxy":
     case "showPinInLogs":
@@ -452,6 +459,106 @@ adminRoutes.post("/config", async (c) => {
   });
   const { cloudflareTunnelToken, ...visible } = readConfig();
   return c.json({ ok: true, config: { ...visible, cloudflareTunnelTokenSet: !!cloudflareTunnelToken }, restartRequired, overriddenByEnv: overridden, ...view });
+});
+
+/* ---------------------------------- HTTPS --------------------------------- */
+
+/** Everything the HTTPS card needs: what is running, what is saved, and the certificates on hand. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function tlsView(c: Context<any>) {
+  const running = tlsState();
+  const saved = readConfig();
+  const modeEnv = envOverride("networkMode") ?? (process.env.TLS_CERT_PATH && process.env.TLS_KEY_PATH ? { name: "TLS_CERT_PATH / TLS_KEY_PATH", value: "custom" } : null);
+  const self = selfSignedPair();
+  const custom = customPair();
+  const host = requestHost(c).replace(/:\d+$/, "");
+  const port = effectivePort();
+  const savedMode = saved.networkMode === "auto" || saved.networkMode === "custom" ? saved.networkMode : "off";
+  // A restart is also needed when the certificate on disk is newer than the one being served.
+  const next = savedMode === "auto" ? self : savedMode === "custom" ? custom : null;
+  const certChanged = !!(running.cert && next && describeCert(next.cert)?.fingerprint !== describeCert(running.cert)?.fingerprint);
+  const boot = bootConfig();
+  return {
+    running: { scheme: running.active ? "https" : "http", source: running.source, problem: running.problem ?? "", cert: running.cert ? describeCert(running.cert) : null },
+    /** What this request arrived over (differs from `running` behind a TLS-terminating proxy). */
+    requestScheme: requestProto(c),
+    mode: modeEnv ? effectiveNetworkMode() : savedMode,
+    lockedBy: modeEnv?.name ?? "",
+    pendingRestart: !modeEnv && (savedMode !== effectiveNetworkMode() || certChanged || saved.httpRedirectPort !== boot.httpRedirectPort || saved.hsts !== boot.hsts),
+    selfSigned: self ? describeCert(self.cert) : null,
+    custom: custom ? { ...describeCert(custom.cert)!, from: custom.from, problem: validatePair(custom.cert, custom.key) ?? "" } : null,
+    suggestedNames: localNames(),
+    host,
+    port,
+    hsts: saved.hsts,
+    httpRedirectPort: saved.httpRedirectPort,
+  };
+}
+
+adminRoutes.get("/tls", (c) => c.json(tlsView(c)));
+
+/**
+ * Choose how the instance is served. Applies after a restart.
+ *   { mode: "off" }                          plain HTTP
+ *   { mode: "auto", names?: string[], regenerate?: boolean }   self-signed certificate
+ *   { mode: "custom", certPem, keyPem }      your certificate (or keep the one already stored)
+ */
+adminRoutes.post("/tls", bodyLimit({ maxSize: 512 * 1024, onError: (c) => c.json({ error: "Certificate too large." }, 413) }), async (c) => {
+  const body = await c.req.json<{ mode?: string; names?: unknown; regenerate?: boolean; certPem?: string; keyPem?: string; httpRedirectPort?: number; hsts?: boolean }>().catch(() => null);
+  const mode = body?.mode;
+  if (mode !== "off" && mode !== "auto" && mode !== "custom") return c.json({ error: "mode must be off, auto or custom." }, 400);
+  if (envOverride("networkMode") || (process.env.TLS_CERT_PATH && process.env.TLS_KEY_PATH)) {
+    return c.json({ error: "HTTPS is set by environment variables (TLS_ENABLED / TLS_CERT_PATH / TLS_KEY_PATH). Change or remove them to manage it here." }, 409);
+  }
+  const patch: Record<string, unknown> = { networkMode: mode };
+  if (mode === "auto") {
+    const names = (Array.isArray(body?.names) ? body!.names : [])
+      .filter((n): n is string => typeof n === "string")
+      .map((n) => n.trim().toLowerCase())
+      .filter((n) => n.length <= 253 && (HOSTNAME_RE.test(n) || /^[0-9a-f:.]{3,45}$/i.test(n)))
+      .slice(0, 20);
+    if (body?.regenerate || names.length > 0 || !selfSignedPair()) {
+      await regenerateSelfSigned(names);
+      if (names[0]) patch.tlsCommonName = names[0];
+    }
+  }
+  if (mode === "custom") {
+    const certPem = typeof body?.certPem === "string" ? body.certPem : "";
+    const keyPem = typeof body?.keyPem === "string" ? body.keyPem : "";
+    if (certPem || keyPem) {
+      const bad = validatePair(certPem, keyPem);
+      if (bad) return c.json({ error: bad }, 400);
+      saveCustomPair(certPem, keyPem);
+      // The uploaded pair is used; path fields would otherwise win over it.
+      patch.tlsCertPath = "";
+      patch.tlsKeyPath = "";
+    } else {
+      const have = customPair();
+      if (!have) return c.json({ error: "Add a certificate and its private key first." }, 400);
+      const bad = validatePair(have.cert, have.key);
+      if (bad) return c.json({ error: bad }, 400);
+    }
+  }
+  if (body?.httpRedirectPort !== undefined) {
+    const n = Number(body.httpRedirectPort);
+    if (!Number.isInteger(n) || n < 0 || n > 65535) return c.json({ error: "HTTP redirect port must be 0 (off) or 1-65535." }, 400);
+    patch.httpRedirectPort = n;
+  }
+  if (typeof body?.hsts === "boolean") patch.hsts = body.hsts;
+  writeConfig(patch as any);
+  audit(c, "config.updated", true, `HTTPS set to ${mode === "off" ? "off (plain HTTP)" : mode === "auto" ? "on with a self-signed certificate" : "on with a custom certificate"}`, {
+    target: "https",
+    severity: "warn",
+    meta: { mode, changed: Object.keys(patch) },
+  });
+  return c.json({ ok: true, ...tlsView(c) });
+});
+
+/** The public certificate in use (or the stored self-signed one), to install on other devices. Never the key. */
+adminRoutes.get("/tls/certificate", (c) => {
+  const pem = tlsState().cert ?? selfSignedPair()?.cert ?? customPair()?.cert;
+  if (!pem) return c.json({ error: "No certificate yet." }, 404);
+  return c.body(pem, 200, { "content-type": "application/x-pem-file", "content-disposition": 'attachment; filename="fyrdrop-certificate.crt"', "cache-control": "no-store" });
 });
 
 adminRoutes.post("/restart", (c) => {

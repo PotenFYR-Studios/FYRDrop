@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api, fileFingerprint, humanSize, isHttpUrl, PAUSE, runLimited, timeAgo, uploadFile, type GroupSummary, type Item, type PendingUpload, type RemoteItem } from "../api";
+import { api, fileFingerprint, humanSize, isHttpUrl, PAUSE, runLimited, timeAgo, uploadFile, zipUrl, type GroupSummary, type Item, type PendingUpload, type RemoteItem } from "../api";
+import { BundleCard, groupBundles, type Bundle } from "../components/Bundles";
 import { Badge, Btn, Card, Empty, ItemMeta, Label, Modal, PageHeader, Progress, Spinner, useSync, useToast } from "../ui";
 import { Icon, mimeIcon } from "../icons";
 import ShareWizard from "./ShareWizard";
-import { AccessChips, AccessDialog, PreviewModal, UploadAccessDialog, type AccessState, defaultAccess, toPayload } from "../components/Access";
+import { AccessChips, AccessDialog, PreviewModal, UploadAccessDialog, type AccessState, type BundleChoice, defaultAccess, toPayload } from "../components/Access";
 
 type UploadJob = { id: string; name: string; pct: number };
 type Tab = "all" | "file" | "image";
@@ -111,7 +112,7 @@ export default function Files() {
       .catch(() => {});
   }, []);
 
-  const runUpload = async (files: File[], access: AccessState | null, resumeId?: string) => {
+  const runUpload = async (files: File[], access: AccessState | null, resumeId?: string, bundle?: BundleChoice) => {
     if (files.length === 0) return;
     const payload = toPayload(access ?? defaultAccess());
     let failed = 0;
@@ -133,6 +134,8 @@ export default function Files() {
           labels: labels.trim() || undefined,
           signal: controller.signal,
           resumeId,
+          batchId: bundle?.batchId || undefined,
+          batchName: bundle?.batchName || undefined,
           onResumed: (pct) => push("info", `${file.name}: resuming at ${pct}%`),
           onProgress: (pct) => setJobs((j) => j.map((x) => (x.id === job.id ? { ...x, pct } : x))),
         });
@@ -148,7 +151,7 @@ export default function Files() {
         setJobs((j) => j.filter((x) => x.id !== job.id));
       }
     });
-    if (failed === 0) push("ok", files.length === 1 ? "Upload complete" : `${files.length} files uploaded`);
+    if (failed === 0) push("ok", files.length === 1 ? "Upload complete" : bundle?.batchId ? `${files.length} files uploaded as one bundle` : `${files.length} files uploaded`);
     else if (failed < files.length) push("info", "Upload finished with errors");
     void reload();
     reloadUnfinished();
@@ -306,6 +309,109 @@ export default function Files() {
     }
   };
 
+  const renderRow = (it: Item) => (
+    <div key={it.id} className="group flex flex-wrap items-center gap-x-3 gap-y-2 p-4 transition hover:bg-white/[0.03] lg:flex-nowrap">
+      <input
+        type="checkbox"
+        checked={selected.has(it.id)}
+        onChange={() => toggleSel(it.id)}
+        onClick={(e) => e.stopPropagation()}
+        className="h-3.5 w-3.5 shrink-0 accent-indigo-500"
+        aria-label={`Select ${it.name}`}
+      />
+      <button onClick={() => openItem(it)} className="shrink-0 text-slate-500 transition hover:text-indigo-300" title="Open preview">
+        <Icon name={mimeIcon(it.mime, it.name)} size={20} />
+      </button>
+      <div className="min-w-[9rem] flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => openItem(it)} className="truncate text-left text-sm font-medium text-slate-100 hover:text-white hover:underline" title={`Open ${it.name}`}>
+            {it.name}
+          </button>
+          {it.pinned ? (
+            <Badge tone="warn">
+              <Icon name="star" size={11} filled />
+            </Badge>
+          ) : null}
+          <AccessChips item={it} />
+          {it.category && <span className="rounded-full border border-[#2a3247] px-2 py-0.5 text-[10px] text-slate-400">{it.category}</span>}
+          {it.labels
+            ? it.labels.split(",").filter(Boolean).slice(0, 3).map((l) => (
+                <span key={l} className="rounded-full bg-white/[0.04] px-2 py-0.5 text-[10px] text-slate-500">#{l}</span>
+              ))
+            : null}
+        </div>
+        <ItemMeta item={it} />
+      </div>
+      <div className="ml-auto flex flex-wrap items-center justify-end gap-1 opacity-80 transition group-hover:opacity-100 sm:gap-1.5 lg:shrink-0 lg:flex-nowrap">
+        <Btn size="sm" variant="soft" onClick={() => openItem(it)}>
+          <Icon name="eye" size={14} /> Open
+        </Btn>
+        {(it.canWrite || it.canManage) && (
+          <Btn size="sm" variant="soft" onClick={() => openMeta(it)} title="Group, category and labels">
+            <Icon name="pencil" size={14} />
+          </Btn>
+        )}
+        {it.canManage && (
+          <Btn size="sm" variant="soft" onClick={() => setAccessItem(it)}>
+            <Icon name="shield" size={14} /> Access
+          </Btn>
+        )}
+        {it.canManage && (
+          <Btn size="sm" variant="soft" onClick={() => void replicate(it)} ariaLabel="Place a copy on the emptiest cluster node" title="Place a copy on the emptiest cluster node">
+            <Icon name="globe" size={14} />
+          </Btn>
+        )}
+        {it.canManage && it.type !== "url" && (
+          <Btn size="sm" variant="soft" onClick={() => setShareItem(it)} ariaLabel="Share">
+            <Icon name="share" size={14} />
+          </Btn>
+        )}
+        <Btn size="sm" variant="soft" href={`/api/items/${it.id}/download`} ariaLabel={`Download ${it.name}`}>
+          <Icon name="download" size={14} />
+        </Btn>
+        <button
+          onClick={() => void togglePin(it)}
+          title={it.pinned ? "Unpin" : "Pin"}
+          aria-label={it.pinned ? "Unpin" : "Pin"}
+          className={`rounded-lg p-1.5 transition hover:bg-white/5 ${it.pinned ? "text-amber-400" : "text-slate-500 hover:text-amber-300"}`}
+        >
+          <Icon name="star" size={16} filled={!!it.pinned} />
+        </button>
+        {it.canDelete && (
+          <button
+            onClick={() => void remove(it)}
+            title="Delete"
+            aria-label="Delete"
+            className="rounded-lg p-1.5 text-slate-500 transition hover:bg-red-500/10 hover:text-red-300"
+          >
+            <Icon name="trash" size={15} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  // Consecutive single items share one card; a bundle is its own card.
+  const entries = groupBundles(visible);
+  const blocks: ({ kind: "singles"; items: Item[] } | { kind: "bundle"; bundle: Bundle })[] = [];
+  for (const e of entries) {
+    const last = blocks[blocks.length - 1];
+    if (e.kind === "bundle") blocks.push(e);
+    else if (last?.kind === "singles") last.items.push(e.item);
+    else blocks.push({ kind: "singles", items: [e.item] });
+  }
+
+  const toggleBundle = (b: Bundle) =>
+    setSelected((sel) => {
+      const n = new Set(sel);
+      const all = b.items.every((i) => n.has(i.id));
+      for (const i of b.items) {
+        if (all) n.delete(i.id);
+        else n.add(i.id);
+      }
+      return n;
+    });
+
   const tabs: { key: Tab; label: string }[] = [
     { key: "all", label: "All" },
     { key: "file", label: "Files" },
@@ -314,7 +420,7 @@ export default function Files() {
 
   return (
     <div className="anim-page">
-      <PageHeader title="Files" subtitle="Upload, paste or drop files. Set who can access them before they go up." />
+      <PageHeader title="Files" subtitle="Upload, paste or drop files. Things you add together are kept as one bundle; single files stay on their own." />
 
       <Card
         className={`mb-5 border-2 border-dashed p-5 transition-all duration-200 sm:p-6 ${
@@ -343,7 +449,7 @@ export default function Files() {
             </span>
             <div className="min-w-0">
               <div className="font-medium text-white">{dragging ? "Release to upload" : "Drag and drop, paste, or click to browse"}</div>
-              <div className="mt-0.5 text-xs text-slate-500">Multiple files · Ctrl+V works on this page · choose a group before uploading</div>
+              <div className="mt-0.5 text-xs text-slate-500">Several files at once stay together as one bundle · Ctrl+V works on this page</div>
             </div>
             <button
               onClick={(e) => {
@@ -554,6 +660,11 @@ export default function Files() {
               <option key={g.id} value={g.id}>{g.name}</option>
             ))}
           </select>
+          {selected.size > 1 && (
+            <Btn size="sm" variant="soft" href={zipUrl([...selected])} title="Download the selected items as one .zip">
+              <Icon name="archive" size={13} /> Download zip
+            </Btn>
+          )}
           <Btn size="sm" variant="danger" onClick={() => void bulkDelete()}>
             <Icon name="trash" size={13} /> Move to trash
           </Btn>
@@ -568,89 +679,27 @@ export default function Files() {
       ) : visible.length === 0 ? (
         <Empty icon="folder" title="No files here yet" hint="Upload something above and it will appear on every device instantly." />
       ) : (
-        <Card className="divide-y divide-[#1c2334] overflow-hidden">
-          {visible.map((it) => (
-            <div key={it.id} className="group flex items-center gap-3 p-4 transition hover:bg-white/[0.03]">
-              <input
-                type="checkbox"
-                checked={selected.has(it.id)}
-                onChange={() => toggleSel(it.id)}
-                onClick={(e) => e.stopPropagation()}
-                className="h-3.5 w-3.5 shrink-0 accent-indigo-500"
-                aria-label={`Select ${it.name}`}
-              />
-              <button onClick={() => openItem(it)} className="shrink-0 text-slate-500 transition hover:text-indigo-300" title="Open preview">
-                <Icon name={mimeIcon(it.mime, it.name)} size={20} />
-              </button>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <button onClick={() => openItem(it)} className="truncate text-left text-sm font-medium text-slate-100 hover:text-white hover:underline" title={`Open ${it.name}`}>
-                    {it.name}
-                  </button>
-                  {it.pinned ? (
-                    <Badge tone="warn">
-                      <Icon name="star" size={11} filled />
-                    </Badge>
-                  ) : null}
-                  <AccessChips item={it} />
-                  {it.category && <span className="rounded-full border border-[#2a3247] px-2 py-0.5 text-[10px] text-slate-400">{it.category}</span>}
-                  {it.labels
-                    ? it.labels.split(",").filter(Boolean).slice(0, 3).map((l) => (
-                        <span key={l} className="rounded-full bg-white/[0.04] px-2 py-0.5 text-[10px] text-slate-500">#{l}</span>
-                      ))
-                    : null}
-                </div>
-                <ItemMeta item={it} />
-              </div>
-              <div className="flex shrink-0 items-center gap-1 opacity-70 transition group-hover:opacity-100 sm:gap-1.5">
-                <Btn size="sm" variant="soft" onClick={() => openItem(it)}>
-                  <Icon name="eye" size={14} /> Open
-                </Btn>
-                {(it.canWrite || it.canManage) && (
-                  <Btn size="sm" variant="soft" onClick={() => openMeta(it)} title="Group, category and labels">
-                    <Icon name="pencil" size={14} />
-                  </Btn>
-                )}
-                {it.canManage && (
-                  <Btn size="sm" variant="soft" onClick={() => setAccessItem(it)}>
-                    <Icon name="shield" size={14} /> Access
-                  </Btn>
-                )}
-                {it.canManage && (
-                  <Btn size="sm" variant="soft" onClick={() => void replicate(it)} ariaLabel="Place a copy on the emptiest cluster node" title="Place a copy on the emptiest cluster node">
-                    <Icon name="globe" size={14} />
-                  </Btn>
-                )}
-                {it.canManage && it.type !== "url" && (
-                  <Btn size="sm" variant="soft" onClick={() => setShareItem(it)} ariaLabel="Share">
-                    <Icon name="share" size={14} />
-                  </Btn>
-                )}
-                <Btn size="sm" variant="soft" href={`/api/items/${it.id}/download`} ariaLabel={`Download ${it.name}`}>
-                  <Icon name="download" size={14} />
-                </Btn>
-                <button
-                  onClick={() => void togglePin(it)}
-                  title={it.pinned ? "Unpin" : "Pin"}
-                  aria-label={it.pinned ? "Unpin" : "Pin"}
-                  className={`rounded-lg p-1.5 transition hover:bg-white/5 ${it.pinned ? "text-amber-400" : "text-slate-500 hover:text-amber-300"}`}
-                >
-                  <Icon name="star" size={16} filled={!!it.pinned} />
-                </button>
-                {it.canDelete && (
-                  <button
-                    onClick={() => void remove(it)}
-                    title="Delete"
-                    aria-label="Delete"
-                    className="rounded-lg p-1.5 text-slate-500 transition hover:bg-red-500/10 hover:text-red-300"
-                  >
-                    <Icon name="trash" size={15} />
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </Card>
+        <div className="space-y-3">
+          {blocks.map((b) =>
+            b.kind === "bundle" ? (
+              <BundleCard
+                key={b.bundle.key}
+                bundle={b.bundle}
+                onChanged={() => void reload()}
+                select={{
+                  state: b.bundle.items.every((i) => selected.has(i.id)) ? "all" : b.bundle.items.some((i) => selected.has(i.id)) ? "some" : "none",
+                  onToggle: () => toggleBundle(b.bundle),
+                }}
+              >
+                {b.bundle.items.map(renderRow)}
+              </BundleCard>
+            ) : (
+              <Card key={b.items[0]!.id} className="divide-y divide-[#1c2334] overflow-hidden">
+                {b.items.map(renderRow)}
+              </Card>
+            ),
+          )}
+        </div>
       )}
 
       {remoteItems.length > 0 && (
@@ -728,10 +777,10 @@ export default function Files() {
         files={pending}
         open={pending.length > 0}
         onClose={() => setPending([])}
-        onConfirm={(access) => {
+        onConfirm={(access, bundle) => {
           const files = pending;
           setPending([]);
-          void runUpload(files, access);
+          void runUpload(files, access, undefined, bundle);
         }}
       />
       <PreviewModal item={preview} open={preview !== null} onClose={() => setPreview(null)} />

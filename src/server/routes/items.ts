@@ -12,7 +12,7 @@ import { requireSession, type SessionCtx } from "../lib/auth";
 import { publish } from "../lib/events";
 import { encryptString, decryptString, encryptPartsToFile, decryptedWebStream, readDecrypted } from "../lib/crypto";
 import { writeStoredFile, pathForRef, deleteStoredFile, unitDirForWrite, makeRef, storageRefusal, markUsageDirty } from "../lib/storage";
-import { maxUploadBytes } from "../lib/settings";
+import { maxUploadBytes, getSettings } from "../lib/settings";
 import { userStorageBytes } from "../lib/storage";
 import { userContentHeaders, ITEM_TYPES } from "../lib/content";
 import { hashSecret, PIN_RE } from "../lib/secrets";
@@ -22,6 +22,8 @@ import { getIdentity, signRequest, seal, open } from "../lib/cluster";
 import { notify } from "../lib/notify";
 import { emit, itemPayload } from "../lib/webhooks";
 import { deleteShareEvents, shareStats, shareTotals } from "../lib/share-stats";
+import { zipStream, zipFits, safeZipNames, ZIP_MAX_ENTRIES, type ZipEntry } from "../lib/zip";
+import { contentDisposition } from "../lib/content";
 import type { AppEnv } from "../lib/net";
 
 export const itemRoutes = new Hono<AppEnv>();
@@ -125,6 +127,23 @@ function parseAccess(body: any, opts: { defaultGroupId?: string } = {}) {
   };
 }
 
+/* --------------------------------- Bundles -------------------------------- */
+
+const BATCH_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const cleanBatchName = (v: unknown) => (typeof v === "string" ? v.replace(/[\u0000-\u001f]/g, " ").trim().slice(0, 120) : "");
+
+/**
+ * Things added in one go carry the same bundle id, chosen by the client. An id
+ * that already belongs to another account is ignored, so nobody can slip
+ * items into someone else's bundle.
+ */
+function cleanBatchId(v: unknown, userId: string): string {
+  if (typeof v !== "string" || !BATCH_RE.test(v)) return "";
+  const id = v.toLowerCase();
+  const other = db.select({ userId: items.userId }).from(items).where(eq(items.batchId, id)).limit(1).get();
+  return other && other.userId !== userId ? "" : id;
+}
+
 function expiryFrom(days: unknown): number | null {
   const d = Number(days);
   if (!Number.isFinite(d) || d <= 0) return null;
@@ -171,6 +190,8 @@ function baseRow(c: Context, partial: Partial<Item> & Pick<Item, "type" | "name"
     groupId: "",
     category: "",
     labels: "",
+    batchId: "",
+    batchName: "",
     audience: "everyone",
     audienceUsers: "",
     audienceGroups: "",
@@ -339,6 +360,8 @@ itemRoutes.post(
     const access = parseFormAccess(form, groupId);
     const category = cleanCategory(form.get("category"));
     const labels = cleanLabels(form.get("labels"));
+    const batchId = cleanBatchId(form.get("batchId"), userId);
+    const batchName = batchId ? cleanBatchName(form.get("batchName")) : "";
 
     const created: Item[] = [];
     for (const file of files) {
@@ -363,6 +386,8 @@ itemRoutes.post(
         groupId,
         category,
         labels,
+        batchId,
+        batchName,
         ...access,
       });
       db.insert(items).values(row).run();
@@ -403,6 +428,8 @@ type Upload = {
   groupId: string;
   category: string;
   labels: string;
+  batchId: string;
+  batchName: string;
   finishing: boolean;
 };
 const activeUploads = new Map<string, Upload>();
@@ -449,6 +476,8 @@ function loadUploads() {
       groupId: meta.groupId ?? "",
       category: meta.category ?? "",
       labels: meta.labels ?? "",
+      batchId: typeof meta.batchId === "string" ? meta.batchId : "",
+      batchName: typeof meta.batchName === "string" ? meta.batchName : "",
       finishing: false,
     });
   }
@@ -582,6 +611,7 @@ itemRoutes.post("/upload/begin", async (c) => {
   const wanted = typeof body?.groupId === "string" ? body.groupId : "";
   const groupId = wanted && isGroupMember(wanted, userId) ? wanted : ensureDefaultGroup(userId);
   const now = Date.now();
+  const batchId = cleanBatchId(body?.batchId, userId);
   const upload: Upload = {
     name,
     mime: typeof body?.mime === "string" && body.mime ? body.mime.slice(0, 100) : "application/octet-stream",
@@ -597,6 +627,8 @@ itemRoutes.post("/upload/begin", async (c) => {
     groupId,
     category: cleanCategory(body?.category),
     labels: cleanLabels(body?.labels),
+    batchId,
+    batchName: batchId ? cleanBatchName(body?.batchName) : "",
     finishing: false,
   };
   db.insert(uploadsTable)
@@ -608,7 +640,7 @@ itemRoutes.post("/upload/begin", async (c) => {
       size,
       chunkSize,
       fingerprint,
-      meta: JSON.stringify({ access: upload.access, groupId, category: upload.category, labels: upload.labels }),
+      meta: JSON.stringify({ access: upload.access, groupId, category: upload.category, labels: upload.labels, batchId: upload.batchId, batchName: upload.batchName }),
       createdAt: now,
       lastActivity: now,
     })
@@ -700,6 +732,8 @@ itemRoutes.post("/upload/finish", async (c) => {
     groupId: upload.groupId,
     category: upload.category,
     labels: upload.labels,
+    batchId: upload.batchId,
+    batchName: upload.batchName,
     expiresAt: expiryFrom(body?.expiresDays),
     ...upload.access,
   });
@@ -763,6 +797,7 @@ itemRoutes.post("/url", async (c) => {
   if (url.username || url.password) return c.json({ error: "URLs with embedded credentials are not allowed." }, 400);
   const href = url.toString();
   const userId = c.get("session").user!.id;
+  const batchId = cleanBatchId(body?.batchId, userId);
   const wanted = typeof body?.groupId === "string" ? body.groupId : "";
   const groupId = wanted && isGroupMember(wanted, userId) ? wanted : ensureDefaultGroup(userId);
   const row = baseRow(c, {
@@ -775,6 +810,8 @@ itemRoutes.post("/url", async (c) => {
     groupId,
     category: cleanCategory(body?.category),
     labels: cleanLabels(body?.labels),
+    batchId,
+    batchName: batchId ? cleanBatchName(body?.batchName) : "",
     ...parseAccess(body?.access ?? body, { defaultGroupId: groupId }),
   });
   db.insert(items).values(row).run();
@@ -786,6 +823,112 @@ itemRoutes.post("/url", async (c) => {
     meta: { url: href, read: row.audience },
   });
   return c.json({ item: serialize(row, c.get("session"), { withContent: true }) }, 201);
+});
+
+/* ----------------------------- Bundle actions ----------------------------- */
+
+/** Live members of a bundle that the caller can see, oldest first. */
+function batchRows(batchId: string, session: SessionCtx): Item[] {
+  if (!BATCH_RE.test(batchId)) return [];
+  const now = Date.now();
+  return db
+    .select()
+    .from(items)
+    .where(and(eq(items.batchId, batchId.toLowerCase()), isNull(items.deletedAt), or(isNull(items.expiresAt), gt(items.expiresAt, now))))
+    .orderBy(sql`${items.createdAt} asc`)
+    .all()
+    .filter((r) => visibleTo(r, session));
+}
+
+/** Rename a bundle, or dissolve it so its items stand alone again. */
+itemRoutes.patch("/batch/:batchId", async (c) => {
+  const session = c.get("session");
+  const rows = batchRows(c.req.param("batchId"), session).filter((r) => canManage(r, session));
+  if (rows.length === 0) return c.json({ error: "Bundle not found, or it is not yours to change." }, 404);
+  const body = await c.req.json<{ name?: string; ungroup?: boolean }>().catch(() => null);
+  const idList = rows.map((r) => r.id);
+  if (body?.ungroup === true) {
+    db.update(items).set({ batchId: "", batchName: "" }).where(inArray(items.id, idList)).run();
+    publish({ scope: "items", action: "updated" });
+    auditRequest(c, "item.bundle-ungrouped", true, `Ungrouped a bundle of ${rows.length} item(s)`, { target: rows[0]!.batchName || rows[0]!.name, meta: { count: rows.length } });
+    return c.json({ ok: true, count: rows.length });
+  }
+  if (typeof body?.name !== "string") return c.json({ error: "Nothing to update." }, 400);
+  const name = cleanBatchName(body.name);
+  db.update(items).set({ batchName: name }).where(inArray(items.id, idList)).run();
+  publish({ scope: "items", action: "updated" });
+  auditRequest(c, "item.bundle-renamed", true, `Renamed a bundle to "${name || "(no name)"}"`, { target: name, meta: { count: rows.length } });
+  return c.json({ ok: true, name, count: rows.length });
+});
+
+/** Move a whole bundle to trash (only the members the caller may delete). */
+itemRoutes.delete("/batch/:batchId", (c) => {
+  const session = c.get("session");
+  const all = batchRows(c.req.param("batchId"), session);
+  const rows = all.filter((r) => canDelete(r, session));
+  if (rows.length === 0) return c.json({ error: all.length ? "You do not have delete access to these items." : "Bundle not found." }, all.length ? 403 : 404);
+  const idList = rows.map((r) => r.id);
+  db.update(items).set({ deletedAt: Date.now() }).where(inArray(items.id, idList)).run();
+  db.delete(shareLinks).where(inArray(shareLinks.itemId, idList)).run();
+  db.delete(userPins).where(inArray(userPins.itemId, idList)).run();
+  publish({ scope: "items", action: "deleted" });
+  for (const r of rows) emit(r.userId, "item.deleted", { item: itemPayload(r), permanent: false });
+  auditRequest(c, "item.trashed", true, `Moved a bundle of ${rows.length} item(s) to trash`, {
+    target: rows[0]!.batchName || rows.map((r) => r.name).join(", ").slice(0, 160),
+    meta: { count: rows.length, bytes: rows.reduce((n, r) => n + r.size, 0), skipped: all.length - rows.length },
+    severity: "warn",
+  });
+  return c.json({ ok: true, trashed: rows.length, skipped: all.length - rows.length });
+});
+
+/** Download a bundle (?batch=) or a hand-picked selection (?ids=a,b,c) as one .zip. */
+itemRoutes.get("/zip", (c) => {
+  const session = c.get("session");
+  const batch = c.req.query("batch") ?? "";
+  let rows: Item[];
+  if (batch) {
+    rows = batchRows(batch, session);
+  } else {
+    const wanted = [...new Set((c.req.query("ids") ?? "").split(",").filter((x) => UUID_RE.test(x)))].slice(0, 900);
+    const now = Date.now();
+    rows = (wanted.length ? db.select().from(items).where(inArray(items.id, wanted)).all() : []).filter(
+      (r) => !r.deletedAt && (!r.expiresAt || r.expiresAt > now) && visibleTo(r, session),
+    );
+  }
+  if (rows.length === 0) return c.json({ error: "Nothing to download." }, 404);
+  const names = safeZipNames(
+    rows.map((r) => (r.type === "url" ? `${r.name}.url.txt` : r.type === "text" && !/\.[a-z0-9]{1,8}$/i.test(r.name) ? `${r.name}.txt` : r.name)),
+  );
+  const entries: ZipEntry[] = [];
+  for (const [i, r] of rows.entries()) {
+    if (r.type === "text" || r.type === "url") {
+      const body = Buffer.from(decryptString(r.content ?? ""));
+      entries.push({ name: names[i]!, size: body.byteLength, mtime: r.createdAt, open: () => body });
+      continue;
+    }
+    const fp = pathForRef(r.storedName ?? "");
+    if (!fs.existsSync(fp)) continue;
+    entries.push({ name: names[i]!, size: r.size, mtime: r.createdAt, open: () => decryptedWebStream(fp) as ReadableStream<Uint8Array> });
+  }
+  if (entries.length === 0) return c.json({ error: "The stored files are missing." }, 410);
+  if (entries.length > ZIP_MAX_ENTRIES || !zipFits(entries)) {
+    return c.json({ error: "This selection is too large for one archive (4 GB or 2000 files). Download the files one by one." }, 413);
+  }
+  db.update(items).set({ downloads: sql`${items.downloads} + 1` }).where(inArray(items.id, rows.map((r) => r.id))).run();
+  publish({ scope: "items", action: "download" });
+  const appName = (getSettings()?.appName || "FYRDrop").replace(/\s+/g, "-");
+  const label = (batch && rows[0]!.batchName) || `${appName}-${new Date().toISOString().slice(0, 10)}`;
+  auditRequest(c, "item.download", true, `Downloaded ${entries.length} item(s) as a zip`, {
+    target: label,
+    meta: { count: entries.length, bytes: entries.reduce((n, e) => n + e.size, 0), zip: true, bundle: !!batch },
+  });
+  return c.body(zipStream(entries), 200, {
+    "content-type": "application/zip",
+    "content-disposition": contentDisposition("attachment", `${label.replace(/[\\/:*?"<>|]+/g, "_").slice(0, 100) || "bundle"}.zip`),
+    "x-content-type-options": "nosniff",
+    "cache-control": "private, no-store",
+    "cross-origin-resource-policy": "same-origin",
+  });
 });
 
 /** Move an item between groups, set its category and labels. */

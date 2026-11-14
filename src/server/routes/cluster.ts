@@ -824,6 +824,9 @@ export async function syncPeerPin(node: typeof clusterNodes.$inferSelect, key: B
     const data = (await sealedFetch(node, key, "GET", "/api/cluster-node/pin", undefined, 8_000)) as any;
     if (typeof data?.pin === "string" && /^\d{4,10}$/.test(data.pin)) {
       db.update(clusterNodes).set({ pinEnc: encryptString(data.pin) }).where(eq(clusterNodes.id, node.id)).run();
+    } else if (data?.pin === "" && node.pinEnc) {
+      // The peer turned its instance PIN off.
+      db.update(clusterNodes).set({ pinEnc: "" }).where(eq(clusterNodes.id, node.id)).run();
     }
   } catch {
     /* older peer or unreachable */

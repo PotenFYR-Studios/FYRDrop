@@ -3,7 +3,10 @@ import { api, humanSize, runLimited, uploadFile, type Item } from "../api";
 import { Btn, Card, Empty, ItemMeta, Modal, PageHeader, Progress, Spinner, useSync, useToast } from "../ui";
 import { Icon } from "../icons";
 import ShareWizard from "./ShareWizard";
-import { AccessChips, AccessDialog, UploadAccessDialog, type AccessState, toPayload } from "../components/Access";
+import { AccessChips, AccessDialog, UploadAccessDialog, type AccessState, type BundleChoice, toPayload } from "../components/Access";
+import { BundleCard, groupBundles, type Bundle } from "../components/Bundles";
+
+const GRID = "grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6";
 
 export default function Gallery() {
   const { push } = useToast();
@@ -58,7 +61,7 @@ export default function Gallery() {
     return () => window.removeEventListener("keydown", h);
   }, [openIdx, images.length]);
 
-  const upload = async (files: File[], access: AccessState) => {
+  const upload = async (files: File[], access: AccessState, bundle: BundleChoice) => {
     const imgs = files.filter((f) => f.type.startsWith("image/"));
     if (imgs.length === 0) {
       push("err", "Only image files can be added to the gallery");
@@ -73,6 +76,8 @@ export default function Gallery() {
         await uploadFile(file, {
           expiresDays: 0,
           access: payload,
+          batchId: bundle.batchId || undefined,
+          batchName: bundle.batchName || undefined,
           onProgress: (pct) => setJobs((j) => j.map((x, xi) => (xi === i ? { ...x, pct } : x))),
         });
       } catch (e: any) {
@@ -80,7 +85,7 @@ export default function Gallery() {
       }
     });
     setJobs([]);
-    push("ok", `Added ${imgs.length} image${imgs.length === 1 ? "" : "s"}`);
+    push("ok", bundle.batchId && imgs.length > 1 ? `Added ${imgs.length} images as one album` : `Added ${imgs.length} image${imgs.length === 1 ? "" : "s"}`);
     void reload();
   };
 
@@ -104,11 +109,33 @@ export default function Gallery() {
     }
   };
 
+  const indexOf = new Map(images.map((img, i) => [img.id, i]));
+  const tile = (img: Item) => (
+    <Card key={img.id} className="group relative overflow-hidden" onClick={() => setOpenIdx(indexOf.get(img.id) ?? 0)}>
+      <div className="aspect-square overflow-hidden">
+        <img src={`/api/items/${img.id}/thumb`} alt={img.name} loading="lazy" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" />
+      </div>
+      <div className="pointer-events-none absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/80 via-black/20 to-transparent p-3 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+        <div className="truncate text-sm font-medium text-white" title={img.name}>{img.name}</div>
+        <div className="text-[11px] text-slate-300">{humanSize(img.size)}</div>
+      </div>
+    </Card>
+  );
+
+  // Loose images share a grid; images added together sit in their own album card.
+  const blocks: ({ kind: "singles"; items: Item[] } | { kind: "bundle"; bundle: Bundle })[] = [];
+  for (const e of groupBundles(images)) {
+    const last = blocks[blocks.length - 1];
+    if (e.kind === "bundle") blocks.push(e);
+    else if (last?.kind === "singles") last.items.push(e.item);
+    else blocks.push({ kind: "singles", items: [e.item] });
+  }
+
   return (
     <div className="anim-page">
       <PageHeader
         title="Gallery"
-        subtitle="Upload or drop images. Thumbnails show up on every paired device."
+        subtitle="Upload or drop images. Several added together become one album; single images stay loose."
         actions={
           <Btn size="sm" onClick={() => inputRef.current?.click()}>
             <Icon name="upload" size={14} /> Add images
@@ -162,23 +189,19 @@ export default function Gallery() {
       ) : images.length === 0 ? (
         <Empty icon="image" title="No images yet" hint="Drop images above to add them here." />
       ) : (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
-          {images.map((img, idx) => (
-            <Card key={img.id} className="group relative overflow-hidden" onClick={() => setOpenIdx(idx)}>
-              <div className="aspect-square overflow-hidden">
-                <img
-                  src={`/api/items/${img.id}/thumb`}
-                  alt={img.name}
-                  loading="lazy"
-                  className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                />
+        <div className="space-y-4">
+          {blocks.map((b) =>
+            b.kind === "bundle" ? (
+              // Images added together form an album: one card, open by default.
+              <BundleCard key={b.bundle.key} bundle={b.bundle} onChanged={() => void reload()} defaultOpen>
+                <div className={`${GRID} p-3 sm:p-4`}>{b.bundle.items.map(tile)}</div>
+              </BundleCard>
+            ) : (
+              <div key={b.items[0]!.id} className={GRID}>
+                {b.items.map(tile)}
               </div>
-              <div className="pointer-events-none absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/80 via-black/20 to-transparent p-3 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                <div className="truncate text-sm font-medium text-white" title={img.name}>{img.name}</div>
-                <div className="text-[11px] text-slate-300">{humanSize(img.size)}</div>
-              </div>
-            </Card>
-          ))}
+            ),
+          )}
         </div>
       )}
 
@@ -229,10 +252,10 @@ export default function Gallery() {
         files={pending}
         open={pending.length > 0}
         onClose={() => setPending([])}
-        onConfirm={(access) => {
+        onConfirm={(access, bundle) => {
           const files = pending;
           setPending([]);
-          void upload(files, access);
+          void upload(files, access, bundle);
         }}
       />
       <AccessDialog

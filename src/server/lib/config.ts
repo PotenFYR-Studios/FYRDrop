@@ -26,6 +26,8 @@ export interface SystemConfig {
   tlsKeyPath: string;
   /** Send HSTS when serving HTTPS. */
   hsts: boolean;
+  /** Plain-HTTP port that only redirects to HTTPS (0 = off). Used when HTTPS is on. */
+  httpRedirectPort: number;
   sessionTtlDays: number;
   trustProxy: boolean;
   showPinInLogs: boolean;
@@ -52,11 +54,12 @@ export interface SystemConfig {
 export const DEFAULTS: SystemConfig = {
   port: 3000,
   host: "0.0.0.0",
-  networkMode: "auto",
+  networkMode: "off",
   tlsCommonName: "fyrdrop.local",
   tlsCertPath: "",
   tlsKeyPath: "",
   hsts: true,
+  httpRedirectPort: 0,
   sessionTtlDays: 30,
   trustProxy: false,
   showPinInLogs: true,
@@ -89,14 +92,15 @@ export interface FieldInfo {
 export const FIELDS: FieldInfo[] = [
   { key: "host", env: ["HOST"], label: "Interface", group: "Network & TLS", restart: true, help: "Bind address. 0.0.0.0 listens on every interface." },
   { key: "port", env: ["PORT", "SERVER_PORT"], label: "Port", group: "Network & TLS", restart: true, help: "TCP port the server listens on." },
-  { key: "networkMode", env: ["TLS_ENABLED"], label: "TLS mode", group: "Network & TLS", restart: true, help: "auto = self-signed certificate, off = plain HTTP (behind a proxy), custom = your certificate. TLS_ENABLED=0/1/auto." },
+  { key: "networkMode", env: ["TLS_ENABLED"], label: "HTTPS mode", group: "Network & TLS", restart: true, help: "off = plain HTTP (the default), auto = HTTPS with a self-signed certificate, custom = HTTPS with your certificate. The HTTPS card above sets this up step by step. TLS_ENABLED=0/auto/custom." },
   { key: "tlsCommonName", env: ["TLS_COMMON_NAME"], label: "TLS common name", group: "Network & TLS", restart: true, help: "Name in the generated self-signed certificate." },
   { key: "tlsCertPath", env: ["TLS_CERT_PATH"], label: "Certificate path", group: "Network & TLS", restart: true, help: "PEM certificate for custom TLS." },
   { key: "tlsKeyPath", env: ["TLS_KEY_PATH"], label: "Private key path", group: "Network & TLS", restart: true, help: "PEM private key for custom TLS." },
-  { key: "hsts", env: [], label: "Send HSTS", group: "Network & TLS", restart: true, help: "Tell browsers to only use HTTPS for this host." },
+  { key: "hsts", env: [], label: "Send HSTS", group: "Network & TLS", restart: true, help: "Tell browsers to only use HTTPS for this host. Only sent while HTTPS is on." },
+  { key: "httpRedirectPort", env: ["HTTP_REDIRECT_PORT"], label: "HTTP redirect port", group: "Network & TLS", restart: true, help: "While HTTPS is on, also listen on this plain-HTTP port and redirect to HTTPS. 0 = off." },
   { key: "sessionTtlDays", env: ["SESSION_TTL_DAYS"], label: "Session length (days)", group: "Sessions & security", restart: true, help: "How long a signed-in device stays signed in." },
   { key: "trustProxy", env: ["TRUST_PROXY"], label: "Trust reverse proxy headers", group: "Sessions & security", restart: true, help: "Read the client IP from X-Forwarded-For. Only enable when a proxy sits in front." },
-  { key: "showPinInLogs", env: [], label: "Show PIN in the startup banner", group: "Sessions & security", restart: false, help: "Print the instance PIN and one-time admin password at boot." },
+  { key: "showPinInLogs", env: [], label: "Show sign-in secrets in the startup banner", group: "Sessions & security", restart: false, help: "Print the one-time admin password (and the instance PIN, when one is set) at boot." },
   { key: "clusterUrl", env: ["CLUSTER_URL"], label: "Cluster address", group: "Public address & tunnels", restart: true, help: "How other nodes reach this one, e.g. https://drop.lan:3000. Needed in Docker with a published port." },
   { key: "tailscaleHostname", env: ["TAILSCALE_HOSTNAME"], label: "Tailscale host name", group: "Public address & tunnels", restart: true, help: "machine.tailnet.ts.net when served through tailscale serve. Proxy headers are then trusted." },
   { key: "cloudflareHostname", env: ["CLOUDFLARE_HOSTNAME"], label: "Cloudflare tunnel host name", group: "Public address & tunnels", restart: true, help: "Public host name of your Cloudflare tunnel." },
@@ -187,10 +191,13 @@ export function effectiveTtlDays(): number {
 
 export function effectiveNetworkMode(): "auto" | "off" | "custom" {
   const env = process.env.TLS_ENABLED?.trim().toLowerCase();
-  if (env === "0" || env === "false" || env === "off") return "off";
-  if (env === "1" || env === "true" || env === "auto") return "auto";
+  if (env === "0" || env === "false" || env === "off" || env === "http") return "off";
+  if (env === "custom") return "custom";
+  // A certificate handed over by environment variables means "use it".
   if (process.env.TLS_CERT_PATH && process.env.TLS_KEY_PATH) return "custom";
-  return bootConfig().networkMode;
+  if (env === "1" || env === "true" || env === "auto" || env === "on" || env === "https") return "auto";
+  const saved = bootConfig().networkMode;
+  return saved === "auto" || saved === "custom" ? saved : "off";
 }
 
 /** Bind address, with HOST env winning over the saved config. */
@@ -205,6 +212,12 @@ export function customTlsPaths(): { cert?: string; key?: string } {
 
 export const effectiveTlsCommonName = () => eff("tlsCommonName") || "fyrdrop.local";
 export const effectiveHsts = () => bootConfig().hsts;
+/** Plain-HTTP redirect port (0 = off). */
+export function effectiveHttpRedirectPort(): number {
+  const o = envOverride("httpRedirectPort");
+  const n = Math.round(Number(o ? o.value : bootConfig().httpRedirectPort));
+  return Number.isInteger(n) && n > 0 && n <= 65535 ? n : 0;
+}
 export const effectiveClusterUrl = () => eff("clusterUrl").replace(/\/+$/, "");
 export const effectiveTailscaleHostname = () => eff("tailscaleHostname");
 export const effectiveCloudflareToken = () => eff("cloudflareTunnelToken");

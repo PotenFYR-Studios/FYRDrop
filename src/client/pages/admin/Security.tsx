@@ -140,7 +140,7 @@ export default function Security() {
             />
             <div>
               <div className="text-sm text-white">Allow new device registration</div>
-              <div className="text-xs text-slate-500">When off, the PIN only works for devices that already have a profile.</div>
+              <div className="text-xs text-slate-500">When off, only existing accounts can sign in; nobody can create a new one.</div>
             </div>
           </label>
           <div className="mt-3">

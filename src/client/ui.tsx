@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { humanSize, timeAgo } from "./api";
+import { copyText, humanSize, timeAgo } from "./api";
 import { Icon, type IconName } from "./icons";
 import { NumberTicker } from "./components/magic";
 
@@ -352,12 +352,11 @@ export function CopyBtn({ text, label = "Copy" }: { text: string; label?: string
       size="sm"
       variant="soft"
       onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(text);
+        if (await copyText(text)) {
           setDone(true);
           push("ok", "Copied to clipboard");
           setTimeout(() => setDone(false), 1500);
-        } catch {
+        } else {
           push("err", "Clipboard blocked by the browser");
         }
       }}

@@ -8,6 +8,8 @@ export const settings = sqliteTable("settings", {
   pinHash: text("pin_hash").notNull(),
   /** AES-encrypted PIN so the boot banner can show it (explicit operator choice). */
   pinEnc: text("pin_enc").notNull().default(""),
+  /** 1 = a device must enter the instance PIN before the sign-in screen. Off on new instances. */
+  pinEnabled: integer("pin_enabled").notNull().default(0),
   maxUploadMb: integer("max_upload_mb").notNull().default(512),
   /** Comma-separated CIDR/IP whitelist; empty = allow all. */
   ipWhitelist: text("ip_whitelist").notNull().default(""),
@@ -72,6 +74,10 @@ export const items = sqliteTable("items", {
   category: text("category").notNull().default(""),
   /** Comma separated labels. */
   labels: text("labels").notNull().default(""),
+  /** Items added together share a bundle id (UUID); empty = a single item. */
+  batchId: text("batch_id").notNull().default(""),
+  /** Optional name of the bundle, repeated on each member. */
+  batchName: text("batch_name").notNull().default(""),
   audience: text("audience").notNull().default("everyone"),
   /** Comma-separated user ids when audience = selected. */
   audienceUsers: text("audience_users").notNull().default(""),

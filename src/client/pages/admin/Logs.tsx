@@ -24,6 +24,8 @@ const CATEGORY: Record<string, CategoryMeta> = {
 const EVENT_LABEL: Record<string, string> = {
   "login.ok": "Device paired",
   "login.failed": "PIN rejected",
+  "item.bundle-renamed": "Bundle renamed",
+  "item.bundle-ungrouped": "Bundle ungrouped",
   "account.login": "Signed in",
   "account.login-failed": "Sign-in failed",
   "account.login-blocked": "Blocked account tried to sign in",

@@ -4,6 +4,8 @@ import { Icon } from "../icons";
 import { Badge, Btn, Card, Input, Label, Modal, Spinner, useToast } from "../ui";
 
 const GROUP_ORDER = ["Network & TLS", "Sessions & security", "Public address & tunnels", "Performance & updates", "Developer"];
+/** Set in the "HTTP & HTTPS" card above, so they are not repeated here. */
+const HTTPS_CARD_FIELDS = new Set(["networkMode", "hsts", "httpRedirectPort"]);
 const SELECT = "w-full rounded-xl border border-[#2a3247] bg-[#12161f] px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-indigo-500 disabled:opacity-50";
 
 /**
@@ -144,7 +146,7 @@ export default function SystemConfigCard() {
     return <Input disabled={locked} value={String(v ?? "")} onChange={(e) => set(f.key, e.target.value)} />;
   };
 
-  const customTls = (locked: ConfigField | undefined) => (locked?.envOverride ? locked.envOverride.value : draft.networkMode) === "custom";
+  const customTls = (locked: ConfigField | undefined) => (locked?.envOverride ? locked.envOverride.value : draft.networkMode) === "custom" || !!draft.tlsCertPath || !!draft.tlsKeyPath;
 
   return (
     <>
@@ -171,6 +173,7 @@ export default function SystemConfigCard() {
               <div className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-500">{group}</div>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {fields
+                  .filter((f) => !HTTPS_CARD_FIELDS.has(f.key))
                   .filter((f) => !((f.key === "tlsCertPath" || f.key === "tlsKeyPath") && !customTls(st.fields.find((x) => x.key === "networkMode")) && !f.envOverride))
                   .map((f) => (
                     <div key={f.key} className={f.key === "cloudflareTunnelToken" || f.key === "clusterUrl" ? "sm:col-span-2" : ""}>

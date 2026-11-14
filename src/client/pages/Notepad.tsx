@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { api, humanSize, type Item } from "../api";
+import { copyText, api, humanSize, type Item } from "../api";
 import { Btn, Card, Empty, Input, ItemMeta, Label, PageHeader, Spinner, Textarea, useSync, useToast } from "../ui";
 import { Icon } from "../icons";
 import { AccessChips, AccessDialog, AccessPicker, defaultAccess, toPayload, type AccessState } from "../components/Access";
@@ -381,10 +381,7 @@ ${body}
                       size="sm"
                       variant="soft"
                       onClick={() =>
-                        void navigator.clipboard
-                          .writeText(preview)
-                          .then(() => push("ok", "Copied to clipboard"))
-                          .catch(() => push("err", "Clipboard blocked by the browser"))
+                        void copyText(preview).then((ok) => (ok ? push("ok", "Copied to clipboard") : push("err", "Clipboard blocked by the browser")))
                       }
                     >
                       <Icon name="copy" size={14} /> Copy

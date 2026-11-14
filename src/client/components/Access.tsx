@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, humanSize, isHttpUrl, type GroupSummary, type Item, type RemoteUser, type UserProfile } from "../api";
+import { api, humanSize, isHttpUrl, newBatchId, type GroupSummary, type Item, type RemoteUser, type UserProfile } from "../api";
 import { Btn, Input, Label, Modal, useToast } from "../ui";
 import { Icon } from "../icons";
 import { mimeIcon } from "../icons";
@@ -245,6 +245,19 @@ export function AccessDialog({ item, open, onClose, onSaved }: { item: Item | nu
   );
 }
 
+/** How a multi-file upload is kept together. `batchId` is empty when the files should stand alone. */
+export interface BundleChoice {
+  batchId: string;
+  batchName: string;
+}
+
+/** A folder upload names its files "folder__sub__file"; the folder makes a good bundle name. */
+function suggestedBundleName(files: File[]) {
+  const first = files[0]?.name ?? "";
+  const folder = first.includes("__") ? first.split("__")[0]! : "";
+  return folder && files.every((f) => f.name.startsWith(`${folder}__`)) ? folder : "";
+}
+
 /** Confirm-share dialog shown after files are selected, before the upload finalizes. */
 export function UploadAccessDialog({
   files,
@@ -255,12 +268,21 @@ export function UploadAccessDialog({
   files: File[];
   open: boolean;
   onClose: () => void;
-  onConfirm: (a: AccessState) => void;
+  onConfirm: (a: AccessState, bundle: BundleChoice) => void;
 }) {
   const [value, setValue] = useState<AccessState>(defaultAccess());
+  const [together, setTogether] = useState(true);
+  const [bundleName, setBundleName] = useState("");
   useEffect(() => {
-    if (open) setValue(defaultAccess());
+    if (open) {
+      setValue(defaultAccess());
+      setTogether(true);
+      setBundleName(suggestedBundleName(files));
+    }
+    // Reset only when the dialog opens for a new selection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+  const many = files.length > 1;
   const total = useMemo(() => files.reduce((n, f) => n + f.size, 0), [files]);
   return (
     <Modal open={open} onClose={onClose} title={`Share ${files.length} file${files.length === 1 ? "" : "s"}`}>
@@ -271,13 +293,36 @@ export function UploadAccessDialog({
           </div>
           <div className="truncate">{files.map((f) => f.name).join(", ")}</div>
         </div>
+        {many && (
+          <div className="rounded-xl border border-[#232a3a] bg-[#12161f] p-3">
+            <label className="flex cursor-pointer items-start gap-2.5">
+              <input type="checkbox" checked={together} onChange={(e) => setTogether(e.target.checked)} className="mt-0.5 h-4 w-4 accent-indigo-500" />
+              <span>
+                <span className="block text-xs font-semibold text-slate-200">Keep these {files.length} files together as one bundle</span>
+                <span className="block text-[11px] leading-snug text-slate-500">
+                  They show as a single card you can open, download as a zip, rename or delete in one go. Untick to list every file on its own.
+                </span>
+              </span>
+            </label>
+            {together && (
+              <Input
+                className="mt-2.5"
+                value={bundleName}
+                onChange={(e) => setBundleName(e.target.value)}
+                maxLength={120}
+                placeholder="Bundle name (optional), e.g. Trip photos"
+                aria-label="Bundle name"
+              />
+            )}
+          </div>
+        )}
         <AccessPicker value={value} onChange={setValue} />
         <p className="text-[11px] leading-relaxed text-slate-500">
           Anyone can read these by default. Only you can edit or delete them. You can change that later from the item's Access menu.
         </p>
         <div className="flex justify-end gap-2">
           <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-          <Btn onClick={() => onConfirm(value)}>
+          <Btn onClick={() => onConfirm(value, many && together ? { batchId: newBatchId(), batchName: bundleName.trim() } : { batchId: "", batchName: "" })}>
             <Icon name="upload" size={14} /> Upload &amp; share
           </Btn>
         </div>

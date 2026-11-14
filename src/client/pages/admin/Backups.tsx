@@ -282,7 +282,7 @@ function RestoreDialog({ backup, onClose, onDone }: { backup: BackupInfo | null;
     setBusy(true);
     try {
       await api.restoreBackup(backup.name, backup.encrypted ? pass : undefined, restart);
-      push(restart ? "info" : "ok", restart ? "Restoring - the server restarts, then sign in with the backup's PIN and accounts" : "Restore staged - it is applied on the next restart");
+      push(restart ? "info" : "ok", restart ? "Restoring - the server restarts, then sign in with the backup's accounts (and PIN, if it had one)" : "Restore staged - it is applied on the next restart");
       onDone();
       onClose();
     } catch (e: any) {

@@ -20,7 +20,7 @@ import {
 import { clientIp, clientIpInfo } from "../lib/net";
 import { getSettings, updateSettings } from "../lib/settings";
 import { hashSecret, verifySecret, PIN_RE, USERNAME_RE, normalizeUsername, validatePassword } from "../lib/secrets";
-import { rateLimit, recordFailure, clearFailures, lockoutRemaining } from "../lib/security";
+import { rateLimit, recordFailure, clearFailures, lockoutRemaining, hit, retryAfter } from "../lib/security";
 import { auditRequest, type LogInput } from "../lib/audit";
 import { identifyDevice, parseUserAgent } from "../lib/device";
 import { cleanAvatar, cleanColor } from "./users";
@@ -55,6 +55,8 @@ authRoutes.get("/status", (c) => {
     ownerName: s?.ownerName ?? "",
     maxUploadMb: s?.maxUploadMb ?? effectiveDefaultMaxUploadMb(),
     registrationOpen: s ? s.registrationOpen === 1 : true,
+    /** Whether a device has to enter the instance PIN before the sign-in screen. */
+    pinRequired: s?.pinEnabled === 1,
     version: VERSION,
   });
 });
@@ -78,10 +80,29 @@ authRoutes.get("/device", rateLimit({ name: "deviceinfo", windowMs: 60_000, max:
 /** Legacy first-run wizard. The instance is provisioned at boot, so this only reports that. */
 authRoutes.post("/setup", (c) => c.json({ error: "This instance is already set up. Sign in instead." }, 409));
 
-/** Stage 1 - pair this device with the instance PIN. */
-authRoutes.post("/login", rateLimit({ name: "pin", windowMs: 60_000, max: 10 }), async (c) => {
+/** A device that only registered itself (no PIN, no account yet) is kept for a day. */
+const UNPAIRED_TTL_MS = 24 * 60 * 60_000;
+
+/**
+ * Stage 1 - register this device. With the instance PIN turned on the PIN is
+ * checked first; without it the page registers itself and goes on to the
+ * account sign-in, which is then the only gate.
+ */
+authRoutes.post("/login", async (c) => {
   const s = getSettings();
   if (!s) return c.json({ error: "Setup required.", needsSetup: true }, 409);
+  const pinOn = s.pinEnabled === 1;
+  // PIN guesses stay tightly limited; self-registration allows a household behind one address.
+  const rlKey = `${pinOn ? "pin" : "pair"}:${clientIp(c)}`;
+  if (!hit(rlKey, 60_000, pinOn ? 10 : 30)) {
+    c.header("Retry-After", String(retryAfter(rlKey)));
+    return c.json({ error: "Too many attempts - wait a moment and try again." }, 429);
+  }
+  if (!pinOn) {
+    // Already registered: keep the session instead of piling up device rows.
+    const have = sessionFromContext(c);
+    if (have && !have.apiKey) return c.json({ ok: true, appName: s.appName, needsAccount: !have.user, deviceName: have.deviceName });
+  }
   const body = await json<{ pin?: string; deviceName?: string; device?: unknown }>(c);
   const pin = typeof body?.pin === "string" ? body.pin.trim() : "";
   const ipInfo = clientIpInfo(c);
@@ -94,20 +115,22 @@ authRoutes.post("/login", rateLimit({ name: "pin", windowMs: 60_000, max: 10 }),
   const attemptedName =
     (typeof (hints as { name?: unknown } | undefined)?.name === "string" && (hints as { name: string }).name.trim().slice(0, 60)) ||
     (quick.os === "Unknown OS" ? "Unknown device" : `${quick.browser} on ${quick.os}`);
-  if (!PIN_RE.test(pin)) return c.json({ error: "PIN must be 4-10 digits." }, 400);
-  const lockKey = `pin:${clientIp(c)}`;
-  const wait = lockoutRemaining(lockKey);
-  if (wait > 0) return c.json({ error: `Too many wrong PINs. Try again in ${Math.ceil(wait / 1000)}s.` }, 429);
-  if (!(await verifySecret(pin, s.pinHash))) {
-    recordFailure(lockKey);
-    audit(c, "login.failed", false, `PIN rejected for ${attemptedName}`, {
-      actor: { name: attemptedName },
-      target: attemptedName,
-      meta: { device: attemptedName, ip: ipInfo.ip, ipSource: ipInfo.source },
-    });
-    return c.json({ error: "Wrong PIN." }, 401);
+  if (pinOn) {
+    if (!PIN_RE.test(pin)) return c.json({ error: "PIN must be 4-10 digits." }, 400);
+    const lockKey = `pin:${clientIp(c)}`;
+    const wait = lockoutRemaining(lockKey);
+    if (wait > 0) return c.json({ error: `Too many wrong PINs. Try again in ${Math.ceil(wait / 1000)}s.` }, 429);
+    if (!(await verifySecret(pin, s.pinHash))) {
+      recordFailure(lockKey);
+      audit(c, "login.failed", false, `PIN rejected for ${attemptedName}`, {
+        actor: { name: attemptedName },
+        target: attemptedName,
+        meta: { device: attemptedName, ip: ipInfo.ip, ipSource: ipInfo.source },
+      });
+      return c.json({ error: "Wrong PIN." }, 401);
+    }
+    clearFailures(lockKey);
   }
-  clearFailures(lockKey);
   // Only now spend time resolving the host name and neighbour table.
   const identity = await identifyDevice({ ua, ip: ipInfo.ip, hints });
   const deviceName = identity.name;
@@ -123,12 +146,14 @@ authRoutes.post("/login", rateLimit({ name: "pin", windowMs: 60_000, max: 10 }),
     reportedIp: String((identity.meta.reportedIp as string) ?? ""),
     mac: identity.mac,
     deviceMeta: JSON.stringify(identity.meta),
+    // Without a PIN anyone can register a device, so it only lives long once an account signs in.
+    ttlMs: pinOn ? undefined : UNPAIRED_TTL_MS,
   });
-  setSessionCookie(c, token);
-  audit(c, "login.ok", true, `${deviceName} paired with the instance PIN`, {
+  setSessionCookie(c, token, pinOn ? undefined : UNPAIRED_TTL_MS);
+  audit(c, "login.ok", true, pinOn ? `${deviceName} paired with the instance PIN` : `${deviceName} opened the sign-in page (no instance PIN)`, {
     actor: { name: deviceName },
     target: deviceName,
-    meta: { device: deviceName, host: identity.hostName, ip: ipInfo.ip, ipSource: ipInfo.source },
+    meta: { device: deviceName, host: identity.hostName, ip: ipInfo.ip, ipSource: ipInfo.source, pin: pinOn },
   });
   publish({ scope: "sessions", action: "login" });
   return c.json({ ok: true, appName: s.appName, needsAccount: true, deviceName });
@@ -322,6 +347,7 @@ authRoutes.get("/settings", requireOwner, (c) => {
     ownerName: s.ownerName,
     maxUploadMb: s.maxUploadMb,
     pin: currentPin() ?? "",
+    pinEnabled: s.pinEnabled === 1,
     registrationOpen: s.registrationOpen === 1,
     ipWhitelist: s.ipWhitelist,
     ipWhitelistEnabled: s.ipWhitelistEnabled === 1,
@@ -338,6 +364,7 @@ authRoutes.post("/settings", requireOwner, async (c) => {
     ownerName?: string;
     currentPin?: string;
     newPin?: string;
+    pinEnabled?: boolean;
     maxUploadMb?: number;
     ipWhitelist?: string;
     ipWhitelistEnabled?: boolean;
@@ -370,21 +397,34 @@ authRoutes.post("/settings", requireOwner, async (c) => {
     if (!Number.isFinite(v) || v < 0 || v > 16_777_216) return c.json({ error: "storageQuotaMb must be between 0 and 16777216 (16 TB)." }, 400);
     patch.storageQuotaMb = Math.round(v);
   }
-  if (body.newPin !== undefined) {
+  if (body.newPin !== undefined && body.pinEnabled !== false) {
     const np = String(body.newPin).trim();
     if (!PIN_RE.test(np)) return c.json({ error: "New PIN must be 4-10 digits." }, 400);
     patch.pinHash = await hashSecret(np);
     patch.pinEnc = encryptString(np);
   }
+  if (typeof body.pinEnabled === "boolean") {
+    if (body.pinEnabled) {
+      // Turning the PIN on needs a PIN: the one sent now, or the one already stored.
+      if (!patch.pinHash && !s.pinHash) return c.json({ error: "Choose a PIN (4-10 digits) to turn the instance PIN on." }, 400);
+      patch.pinEnabled = 1;
+    } else {
+      patch.pinEnabled = 0;
+      patch.pinHash = "";
+      patch.pinEnc = "";
+    }
+  }
   updateSettings(patch);
-  const changed = Object.keys(patch).filter((k) => k !== "pinHash" && k !== "pinEnc").concat(patch.pinHash ? ["pin"] : []);
+  const pinNote = patch.pinEnabled === 0 ? ["pin turned off"] : patch.pinEnabled === 1 && !s.pinEnabled ? ["pin turned on"] : patch.pinHash ? ["pin"] : [];
+  const changed = Object.keys(patch).filter((k) => k !== "pinHash" && k !== "pinEnc" && k !== "pinEnabled").concat(pinNote);
   audit(c, "settings.updated", true, `Instance settings updated: ${changed.join(", ") || "no changes"}`, {
     target: "instance settings",
+    severity: pinNote.length ? "warn" : "info",
     meta: { changed },
   });
   publish({ scope: "settings", action: "updated" });
   const fresh = getSettings();
-  return c.json({ ok: true, appName: fresh?.appName, maxUploadMb: fresh?.maxUploadMb });
+  return c.json({ ok: true, appName: fresh?.appName, maxUploadMb: fresh?.maxUploadMb, pinEnabled: fresh?.pinEnabled === 1 });
 });
 
 /** Account count for the login screen hint (no names - avoids user enumeration). */

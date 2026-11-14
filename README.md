@@ -1,6 +1,6 @@
 # 📡 FYRDrop
 
-**Self-hosted sharing hub** - share files, notes, links and images between your own devices and people you trust. PIN-paired devices, real accounts, AES-256-GCM encrypted at rest, served over built-in HTTPS. Runs anywhere: Docker, Bun, Node-compatible hosts, Pterodactyl / Pelican / FeatherPanel eggs.
+**Self-hosted sharing hub** - share files, notes, links and images between your own devices and people you trust. Real accounts with two-step sign-in, an optional instance PIN, AES-256-GCM encrypted at rest. Starts on plain HTTP and switches to HTTPS in two clicks. Runs anywhere: Docker, Bun, Node-compatible hosts, Pterodactyl / Pelican / FeatherPanel eggs.
 
 ```
 Files · Notepad · Links · Gallery · Certificates · P2P Transfer · Covert Tools · Federation
@@ -24,17 +24,18 @@ Files · Notepad · Links · Gallery · Certificates · P2P Transfer · Covert T
 | **Backups** | Encrypted (passphrase) or plain tar backups of the database, keys and settings, optionally with every stored file; scheduled backups with retention; restore from a local or uploaded backup with rollback |
 | **Notifications** | Bell inbox for shares, sign-ins, security changes, storage and instance alerts; optional email copies per event |
 | **API & webhooks** | Personal API keys (read or read + write) and signed webhooks for item and share events |
-| **Accounts** | Instance PIN pairs a device; each person then signs in to their own account (or registers one). The owner account sees every account and device, and the profile page lists your own devices |
+| **Bundles** | Things added together stay together: several files, a folder, a set of images or a pasted list of links become one bundle card with a name, a count and a total size. Open it, download it as one `.zip`, rename it, ungroup it or trash it in one go. Anything added alone stays a single item; any selection on the Files page can also be downloaded as a zip |
+| **Accounts** | Each person signs in to their own account (or registers one). An optional instance PIN can be put in front of the sign-in page. The owner account sees every account and device, and the profile page lists your own devices |
 | **Admin** | Analytics, a **Devices** page that ties every session to its account (rename, MAC note, revoke), a filterable **Activity log** with actor/target/IP and expandable details, storage breakdown & safe orphan cleanup, security center, instance settings, account management |
 | **Realtime** | A single shared SSE stream per browser tab keeps every page live |
 
 ### Security
 
-- **Two-stage sign-in.** A device is first paired with the **instance PIN** (argon2id-hashed). Then the person signs in to an account, or creates one. The session is **rotated** at account sign-in, so a pre-login token can't be reused (no session fixation).
+- **Account sign-in, optional instance PIN.** Every person signs in to an account (argon2id passwords, optional TOTP or passkey). The owner can also turn on an **instance PIN** under Admin → Settings: a shared code a new device must enter before it even sees the sign-in page - useful when the instance is reachable from the internet. It is **off by default**. The session is **rotated** at account sign-in, so a pre-login token can't be reused (no session fixation), and a device that has not signed in yet only holds a 24-hour session.
 - **Owner account with a one-time password.** First boot creates the `admin` account and prints its one-time password in the startup banner. It must be replaced at first sign-in; nothing else on the admin surface works until then.
 - **Progressive lockout per username** after 5 wrong passwords, independent of IP, and login errors never reveal whether a username exists. Share-link PINs are locked out the same way.
 - **AES-256-GCM at rest** - uploads, notes, links and certificate private keys are encrypted with a per-instance master key (`data/keys/master.key`). Nothing readable on disk without it.
-- **HTTPS out of the box** - `TLS_ENABLED=auto` generates a self-signed certificate and serves TLS directly (HSTS is sent over HTTPS). Bring your own cert via `TLS_CERT_PATH` / `TLS_KEY_PATH`, or set `TLS_ENABLED=0` behind a reverse proxy.
+- **HTTP by default, HTTPS when you want it** - a new instance serves plain HTTP so it works immediately on a trusted network or behind a proxy. **Admin → Settings → HTTP & HTTPS** turns on HTTPS with a self-signed certificate (valid for the machine's names and addresses) or with your own certificate, which is validated before it is saved. A broken certificate never locks you out: the server falls back to HTTP and says why. See [HTTP and HTTPS](#-http-and-https).
 - **OWASP hardening** - strict CSP (`default-src 'self'`), `X-Frame-Options: DENY`, nosniff, referrer policy, CSRF origin checks on all mutating API calls, rate limits, body limits, no stack traces to clients, path-safe stored filenames.
 - **Safe inline serving** - only images, audio, video, PDF and plain text render inline; HTML/SVG/JS uploads always download (`Content-Disposition: attachment`), so an uploaded file can't XSS the hub.
 - **Per-item access model** - every item has read / write / delete scopes (`everyone`, `selected`, `private`). New items default to *everyone can read, only the uploader (and owner) can edit or delete*. Write/delete never exceed read.
@@ -44,8 +45,8 @@ Files · Notepad · Links · Gallery · Certificates · P2P Transfer · Covert T
 - **Password reset by email** - with SMTP configured, people confirm an address and can reset a forgotten password through a single-use link that expires after 30 minutes. Links are built from the configured public URL, never from the request's Host header, and the token travels in the URL fragment.
 - **Bounded memory** - rate-limit maps, upload registries and the audit log are capped and swept; unfinished chunked uploads are kept for 7 days so they can be resumed, then removed.
 - **Activity log** - every sign-in, upload, download, share link, access change, certificate action, storage cleanup, cluster join and account change is recorded with the account that did it, the target, the client IP and a machine-readable detail blob. Filter by category, status, time range or account; new events arrive live. Admin → Security keeps a short recent view with a link to the full log.
-- **Device inventory** - Admin → Devices lists every session with its account chip, host name, address plus address source, browser/OS, screen, first and last seen dates and MAC. Rename a device, annotate it, or revoke it; revoking asks for the instance PIN next time. Each person sees the same list for their own sessions under Profile.
-- **Automatic device identity** - opening the app names the device before the PIN is even entered: the server resolves the host name of the client address through DNS and the OS resolver, and falls back to the browser and system name. The page also reports platform, screen, time zone, language, CPU threads, memory and, when the browser allows it, a local IPv4 gathered from WebRTC ICE candidates. Everything is stored with the session, not in a cookie.
+- **Device inventory** - Admin → Devices lists every session with its account chip, host name, address plus address source, browser/OS, screen, first and last seen dates and MAC. Rename a device, annotate it, or revoke it; a revoked device is signed out at once. Each person sees the same list for their own sessions under Profile.
+- **Automatic device identity** - opening the app names the device before anyone signs in: the server resolves the host name of the client address through DNS and the OS resolver, and falls back to the browser and system name. The page also reports platform, screen, time zone, language, CPU threads, memory and, when the browser allows it, a local IPv4 gathered from WebRTC ICE candidates. Everything is stored with the session, not in a cookie.
 - **Addresses and MAC** - the address column is always what the server saw on the socket, tagged `connection`, `proxy`, `docker bridge` or `loopback`, so a wrong-looking address is explained instead of silently trusted. Browsers cannot read the MAC address; on bare metal the app reads it from the server's neighbour table (ARP), and inside Docker it says so and relies on the manual MAC note. Run with host networking on Linux (see `docker-compose.yml`) for real LAN addresses and MACs.
 
 > **About MAC addresses:** HTTP cannot see client MAC addresses (they die at the first hop). FYRDrop shows IP + user-agent per connection and lets admins **annotate devices with their MAC** in Admin → Connections for LAN inventory.
@@ -58,7 +59,6 @@ Files · Notepad · Links · Gallery · Certificates · P2P Transfer · Covert T
 docker run -d \
   --name fyrdrop \
   -p 3000:3000 \
-  -e TLS_ENABLED=auto \
   -v fyrdrop-data:/app/data \
   ghcr.io/potenfyr-studios/fyrdrop:latest
 ```
@@ -70,12 +70,57 @@ git clone https://github.com/PotenFYR-Studios/FYRDrop
 cd FYRDrop && docker compose up -d
 ```
 
-Open `https://localhost:3000` (accept the self-signed certificate - or download it from Certificates to trust it), then:
+Open `http://localhost:3000`, then:
 
-1. **Read the startup banner** - it prints the **instance PIN** and the owner login (`admin` + one-time password).
-2. Enter the PIN to pair the device.
-3. Sign in as `admin` and set a real password.
-4. Other people pair with the same PIN, then **create their own account** - or sign in to an existing one (`Switch account` keeps the device paired).
+1. **Read the startup banner** (`docker logs fyrdrop`) - it prints the owner login (`admin` + one-time password).
+2. Sign in as `admin` and set a real password.
+3. Other people open the same address and **create their own account** - or sign in to an existing one.
+4. Optional: turn on **HTTPS** and the **instance PIN** under Admin → Settings.
+
+## 🔒 HTTP and HTTPS
+
+FYRDrop starts on **plain HTTP**. That is the right setup on a network you trust and whenever something in front already provides HTTPS. Everything works over HTTP except passkeys, which browsers only allow on HTTPS or `localhost`.
+
+| You want | Do this |
+| --- | --- |
+| **HTTP** (default) | Nothing. |
+| **HTTPS, self-signed** - encryption on the LAN, no domain name | Admin → Settings → **HTTP & HTTPS** → *HTTPS, self-signed* → Save → Restart. Open `https://<address>:3000` and accept the one-time browser warning, or download the certificate from the same card and install it as trusted on each device. Env: `TLS_ENABLED=auto`. |
+| **HTTPS, your certificate** - Let's Encrypt, company CA, mkcert | Same card → *HTTPS, your certificate* → paste or pick the full-chain certificate and the private key (no passphrase) → Save → Restart. The pair is checked first (readable, not expired, key matches). Env: `TLS_CERT_PATH` + `TLS_KEY_PATH` for files that a tool such as certbot renews. |
+| **A reverse proxy or tunnel does HTTPS** - Caddy, nginx, Traefik, Tailscale, Cloudflare | Keep FYRDrop on HTTP and set `TRUST_PROXY=1` so it sees the real client address and scheme. |
+
+Good to know:
+
+- Changes apply after a restart; the Settings card shows what is saved versus what is running and offers the restart.
+- `HTTP_REDIRECT_PORT=80` (or the field in the card) also listens on plain HTTP and redirects to the HTTPS address.
+- If a certificate is missing, expired or does not match its key, the server starts on HTTP instead of refusing to start, and the card shows the reason.
+- HSTS is only sent over HTTPS. Turn it off in the card before going back to HTTP, or clear it in the browser (`chrome://net-internals/#hsts`).
+- An environment variable that is set wins over the Settings page and locks the choice there.
+
+Caddy (certificate issued and renewed for you):
+
+```
+drop.example.com {
+    reverse_proxy 127.0.0.1:3000
+}
+```
+
+nginx, inside your HTTPS `server` block:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_http_version 1.1;
+    proxy_buffering off;            # live updates (server-sent events)
+    proxy_request_buffering off;    # large uploads
+    client_max_body_size 100m;      # uploads are sent in chunks of at most 32 MB
+}
+```
+
+The same guide is in the app under **Help → HTTP and HTTPS**.
 
 The container health check hits `/health` with `curl` (installed in the image), so `docker ps` shows a truthful `healthy` status.
 
@@ -105,9 +150,10 @@ Every variable below except `DATA_DIR` and `NODE_ENV` can also be set in **Admin
 | `PORT` / `SERVER_PORT` | Port | `3000` | Listen port (wings injects `SERVER_PORT`) |
 | `HOST` | Interface | `0.0.0.0` | Bind address |
 | `DATA_DIR` | - (shown read-only) | `./data` | SQLite DB, uploads, keys, certs, TLS, `config.json` |
-| `TLS_ENABLED` | TLS mode | `auto` | `auto`/`1` = self-signed HTTPS; `0` = plain HTTP behind a proxy |
-| `TLS_CERT_PATH` / `TLS_KEY_PATH` | Certificate / key path | - | Bring your own PEM cert/key |
-| `TLS_COMMON_NAME` | TLS common name | `fyrdrop.local` | CN of the auto-generated cert |
+| `TLS_ENABLED` | HTTPS mode | `0` | `0` = plain HTTP (default); `auto`/`1` = HTTPS with a self-signed certificate; `custom` = HTTPS with your certificate |
+| `TLS_CERT_PATH` / `TLS_KEY_PATH` | Certificate / key path | - | Bring your own PEM cert/key (turns HTTPS on) |
+| `TLS_COMMON_NAME` | TLS common name | `fyrdrop.local` | Extra name in the auto-generated cert |
+| `HTTP_REDIRECT_PORT` | HTTP redirect port | `0` | With HTTPS on: also listen on this plain-HTTP port and redirect to HTTPS |
 | `SESSION_TTL_DAYS` | Session length | `30` | Device session lifetime |
 | `TRUST_PROXY` | Trust reverse proxy headers | `0` | Set to `1` only behind a trusted reverse proxy so `X-Forwarded-For` is used |
 | `CLUSTER_URL` | Cluster address | detected LAN address | How other cluster nodes reach this one (set it in Docker with a published port) |
@@ -129,7 +175,7 @@ Every variable below except `DATA_DIR` and `NODE_ENV` can also be set in **Admin
 | Pelican (Wings ≥1.11) | `eggs/pelican/fyrdrop-egg.json` | Import directly (or re-import the Pterodactyl egg) |
 | FeatherPanel | `eggs/feather/fyrdrop-egg.json` | Import; if your version rejects it, import the Pterodactyl egg instead |
 
-Eggs use the official `ghcr.io/potenfyr-studios/fyrdrop` image - no runtime install needed. Data persists under `/home/container/data`. Configurable variables: max upload size, TLS mode, TLS CN, session TTL. Releases also attach ready-made `fyrdrop-*-egg.json` files.
+Eggs use the official `ghcr.io/potenfyr-studios/fyrdrop` image - no runtime install needed. Data persists under `/home/container/data`. Configurable variables: max upload size, HTTPS mode (plain HTTP by default), TLS CN, session TTL. Releases also attach ready-made `fyrdrop-*-egg.json` files.
 
 ## 📦 Standalone binaries
 
@@ -138,7 +184,7 @@ Every release ships standalone executables (Bun compile) for **linux x64/arm64, 
 ```bash
 tar -xzf fyrdrop-v1.0.0-linux-x64.tar.gz
 tar -xzf fyrdrop-client-v1.0.0.tar.gz -C dist/public   # client bundle → ./dist/public
-TLS_ENABLED=auto PORT=3000 ./fyrdrop-linux-x64
+PORT=3000 ./fyrdrop-linux-x64          # http://localhost:3000 (TLS_ENABLED=auto for HTTPS)
 ```
 
 ### Accounts: owner vs normal user
@@ -238,7 +284,7 @@ bun install && bun run build && bun run start   # http://localhost:3000
 
 ### Docker Compose (local)
 
-`docker-compose.yml` ships a production-ready stack (volume, healthcheck, optional HTTPS). Just `docker compose up -d`.
+`docker-compose.yml` ships a production-ready stack (volume, healthcheck, plain HTTP on port 3000; HTTPS is one setting away). Just `docker compose up -d`.
 
 ### Tailscale (private mesh - recommended for personal use)
 
@@ -263,7 +309,7 @@ docker compose -f docker-compose.yml -f docker-compose.remote.yml --profile clou
 
 - `cloudflared` connects your tunnel to the app; TLS terminates at Cloudflare's edge (hence `TLS_ENABLED=0`).
 - The app detects the tunnel at boot (`CLOUDFLARE_TUNNEL_TOKEN`) and logs the public URL; client IPs arrive via `cf-connecting-ip`.
-- Add a Cloudflare Access application in front for zero-trust SSO layering; keep the app's own PIN as a second factor.
+- Add a Cloudflare Access application in front for zero-trust SSO layering, and turn on the instance PIN (Admin → Settings) as a second gate.
 - Behind any proxy the origin check uses `x-forwarded-host`, so custom domains work unchanged.
 
 ### Pterodactyl / Pelican / FeatherPanel
@@ -276,7 +322,7 @@ All endpoints are JSON under `/api`, cookie-authenticated (httpOnly, SameSite=La
 
 ```
 GET  /api/auth/status                     instance identity + registration state
-POST /api/auth/login                      stage 1 - pair a device with the instance PIN
+POST /api/auth/login                      stage 1 - register this device (checks the instance PIN when it is on)
 POST /api/auth/account/register           stage 2 - create an account on a paired device
 POST /api/auth/account/login              stage 2 - sign in (session is rotated)
 POST /api/auth/account/logout             switch account, keep the device paired

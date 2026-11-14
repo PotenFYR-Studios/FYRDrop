@@ -1,10 +1,22 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, timeAgo } from "../../api";
+import { api, copyText, timeAgo } from "../../api";
 import { Icon } from "../../icons";
 import { Badge, Btn, Card, Empty, Input, Label, Modal, PageHeader, Spinner, useToast, useSync } from "../../ui";
 import type { UpdateCheck, UpdateStatus } from "../../api";
 import MailSettings from "../../components/MailSettings";
 import SystemConfigCard from "../../components/SystemConfigCard";
+import HttpsCard from "../../components/HttpsCard";
+
+/** A 6-digit suggestion from the browser's CSPRNG (rejection sampling avoids modulo bias). */
+function randomPin() {
+  const buf = new Uint32Array(1);
+  let n = 0;
+  do {
+    crypto.getRandomValues(buf);
+    n = buf[0]!;
+  } while (n >= 4_294_000_000);
+  return String(100000 + (n % 900000));
+}
 
 function statusTone(status: string): "ok" | "bad" | "default" {
   if (status === "ok") return "ok";
@@ -12,7 +24,7 @@ function statusTone(status: string): "ok" | "bad" | "default" {
   return "bad";
 }
 
-/** Instance settings: identity, upload limits, PIN rotation and network. */
+/** Instance settings: identity, upload limits, the optional instance PIN, HTTP/HTTPS and system configuration. */
 export default function AdminSettings() {
   const { push } = useToast();
 
@@ -27,6 +39,7 @@ export default function AdminSettings() {
   const [showOldPin, setShowOldPin] = useState(false);
   const [newPin, setNewPin] = useState("");
   const [pinBusy, setPinBusy] = useState(false);
+  const [pinEnabled, setPinEnabled] = useState(false);
 
   const reload = useCallback(() => {
     api
@@ -36,6 +49,7 @@ export default function AdminSettings() {
         setOwnerName(s.ownerName);
         setMaxUploadMb(s.maxUploadMb);
         setOldPin(s.pin || "");
+        setPinEnabled(s.pinEnabled);
       })
       .catch((e) => push("err", e.message ?? "Failed to load settings"));
   }, [push]);
@@ -86,9 +100,29 @@ export default function AdminSettings() {
     }
   };
 
+  const setPinRequired = async (on: boolean) => {
+    if (on && !/^\d{4,10}$/.test(newPin)) {
+      push("err", "Choose a PIN of 4-10 digits");
+      return;
+    }
+    if (!on && !window.confirm("Turn the instance PIN off? Anyone who can reach this address will see the sign-in page. Accounts and passwords keep protecting the data.")) return;
+    setPinBusy(true);
+    try {
+      await api.saveSettings(on ? { pinEnabled: true, newPin } : { pinEnabled: false });
+      push("ok", on ? "Instance PIN is on. New devices need it before they can sign in." : "Instance PIN is off. New devices go straight to the sign-in page.");
+      setNewPin("");
+      setShowOldPin(on);
+      reload();
+    } catch (e: any) {
+      push("err", e.message ?? "Could not change the PIN setting");
+    } finally {
+      setPinBusy(false);
+    }
+  };
+
   return (
     <div>
-      <PageHeader title="Settings" subtitle="Instance name, limits and network." />
+      <PageHeader title="Settings" subtitle="Instance name, limits, sign-in PIN, HTTP/HTTPS and system configuration." />
 
       <div className="mb-6 grid gap-5 lg:grid-cols-2">
         <Card className="p-5">
@@ -124,50 +158,74 @@ export default function AdminSettings() {
         </Card>
 
         <Card className="p-5">
-          <h2 className="mb-4 flex items-center gap-2 text-sm font-semibold text-white">
+          <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-white">
             <Icon name="key" size={15} className="text-indigo-300" />
-            Change PIN
+            Instance PIN
+            <Badge tone={pinEnabled ? "ok" : "default"}>{pinEnabled ? "on" : "off"}</Badge>
           </h2>
+          <p className="mb-4 text-xs leading-relaxed text-slate-500">
+            {pinEnabled
+              ? "A new device has to enter this shared PIN before it even sees the sign-in page. Accounts and passwords still apply after it."
+              : "Off: anyone who can reach this address sees the sign-in page, and accounts with passwords protect the data. Turn the PIN on to add a shared code in front of the sign-in page, for example when the instance is reachable from the internet."}
+          </p>
           <div className="space-y-3">
+            {pinEnabled && (
+              <div>
+                <Label>Current PIN</Label>
+                <div className="flex items-center gap-2 rounded-xl border border-[#2a3247] bg-[#12161f] px-3 py-2">
+                  <span className="mono flex-1 text-sm tracking-[0.3em] text-slate-200">{showOldPin ? oldPin : "•".repeat(Math.max(4, oldPin.length))}</span>
+                  <button type="button" onClick={() => setShowOldPin((v) => !v)} className="rounded-lg p-1 text-slate-500 hover:text-slate-200" title={showOldPin ? "Hide PIN" : "Show PIN"}>
+                    <Icon name={showOldPin ? "eyeOff" : "eye"} size={14} />
+                  </button>
+                  <button type="button" onClick={() => void copyText(oldPin).then((ok) => push(ok ? "ok" : "err", ok ? "PIN copied" : "Clipboard blocked by the browser"))} className="rounded-lg p-1 text-slate-500 hover:text-slate-200" title="Copy PIN">
+                    <Icon name="copy" size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
             <div>
-              <Label>Current PIN</Label>
-              <div className="flex items-center gap-2 rounded-xl border border-[#2a3247] bg-[#12161f] px-3 py-2">
-                <span className="mono flex-1 text-sm tracking-[0.3em] text-slate-200">{showOldPin ? oldPin : "•".repeat(Math.max(4, oldPin.length))}</span>
-                <button type="button" onClick={() => setShowOldPin((v) => !v)} className="rounded-lg p-1 text-slate-500 hover:text-slate-200" title={showOldPin ? "Hide PIN" : "Show PIN"}>
-                  <Icon name={showOldPin ? "eyeOff" : "eye"} size={14} />
-                </button>
-                <button type="button" onClick={() => void navigator.clipboard.writeText(oldPin).then(() => push("ok", "PIN copied"))} className="rounded-lg p-1 text-slate-500 hover:text-slate-200" title="Copy PIN">
-                  <Icon name="copy" size={14} />
-                </button>
+              <Label>{pinEnabled ? "New PIN" : "PIN to set"}</Label>
+              <div className="flex gap-2">
+                <Input
+                  type={pinEnabled ? "password" : "text"}
+                  value={newPin}
+                  onChange={(e) => setNewPin(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                  placeholder="4-10 digits"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  className={pinEnabled ? "" : "mono tracking-[0.3em]"}
+                />
+                {!pinEnabled && (
+                  <Btn variant="soft" onClick={() => setNewPin(randomPin())} title="Suggest a random 6-digit PIN">
+                    <Icon name="sparkles" size={14} /> Random
+                  </Btn>
+                )}
               </div>
             </div>
-            <div>
-              <Label>New PIN</Label>
-              <Input
-                type="password"
-                value={newPin}
-                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, "").slice(0, 10))}
-                placeholder="••••"
-                inputMode="numeric"
-                autoComplete="new-password"
-              />
-            </div>
           </div>
-          <p className="mt-2 text-xs text-slate-500">4-10 digits. Existing sessions stay signed in; new sign-ins use the new PIN.</p>
-          <div className="mt-4">
-            <Btn variant="soft" onClick={() => void changePin()} disabled={pinBusy}>
-              {pinBusy ? (
-                "Changing…"
-              ) : (
-                <>
-                  <Icon name="key" size={15} /> Change PIN
-                </>
-              )}
-            </Btn>
+          <p className="mt-2 text-xs text-slate-500">
+            {pinEnabled ? "Devices that are already signed in stay signed in; new devices need the PIN." : "Devices that are already signed in stay signed in. Give the PIN to the people who should be able to reach the sign-in page."}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {pinEnabled ? (
+              <>
+                <Btn variant="soft" onClick={() => void changePin()} disabled={pinBusy || !newPin}>
+                  <Icon name="key" size={15} /> {pinBusy ? "Saving…" : "Change PIN"}
+                </Btn>
+                <Btn variant="ghost" onClick={() => void setPinRequired(false)} disabled={pinBusy}>
+                  <Icon name="unlock" size={15} /> Turn the PIN off
+                </Btn>
+              </>
+            ) : (
+              <Btn onClick={() => void setPinRequired(true)} disabled={pinBusy || !/^\d{4,10}$/.test(newPin)}>
+                <Icon name="lock" size={15} /> {pinBusy ? "Saving…" : "Turn the PIN on"}
+              </Btn>
+            )}
           </div>
         </Card>
       </div>
 
+      <HttpsCard />
       <SystemConfigCard />
       <MailSettings />
       <UpdateCard />

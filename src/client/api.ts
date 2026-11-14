@@ -21,6 +21,9 @@ export interface Item {
   groupId: string;
   category: string;
   labels: string;
+  /** Shared by items that were added together; empty for a single item. */
+  batchId: string;
+  batchName: string;
   audience: Scope;
   audienceUsers: string;
   audienceGroups: string;
@@ -199,6 +202,8 @@ export interface Status {
   ownerName: string;
   maxUploadMb: number;
   registrationOpen: boolean;
+  /** True when a device must enter the instance PIN before the sign-in screen. */
+  pinRequired: boolean;
   version: string;
 }
 
@@ -475,7 +480,7 @@ export const api = {
   changePassword: (currentPassword: string, newPassword: string) =>
     req<{ ok: boolean; signedOut: number }>("/api/auth/account/password", post({ currentPassword, newPassword })),
 
-  ownerSettings: () => req<{ appName: string; ownerName: string; maxUploadMb: number; pin: string; registrationOpen: boolean; ipWhitelist: string; ipWhitelistEnabled: boolean; storageQuotaMb: number }>("/api/auth/settings"),
+  ownerSettings: () => req<{ appName: string; ownerName: string; maxUploadMb: number; pin: string; pinEnabled: boolean; registrationOpen: boolean; ipWhitelist: string; ipWhitelistEnabled: boolean; storageQuotaMb: number }>("/api/auth/settings"),
   saveSettings: (p: Record<string, unknown>) => req("/api/auth/settings", post(p)),
 
   // profile
@@ -504,7 +509,7 @@ export const api = {
     expiresDays: number,
     access: AccessPayload,
     signal?: AbortSignal,
-    meta?: { groupId?: string; category?: string; labels?: string },
+    meta?: { groupId?: string; category?: string; labels?: string; batchId?: string; batchName?: string },
   ) => {
     const form = new FormData();
     files.forEach((f) => form.append("files", f));
@@ -513,19 +518,25 @@ export const api = {
     if (meta?.groupId) form.append("groupId", meta.groupId);
     if (meta?.category) form.append("category", meta.category);
     if (meta?.labels) form.append("labels", meta.labels);
+    if (meta?.batchId) form.append("batchId", meta.batchId);
+    if (meta?.batchName) form.append("batchName", meta.batchName);
     return req<{ items: Item[] }>("/api/items/upload", { method: "POST", body: form, signal });
   },
   shareText: (title: string, content: string, expiresDays: number, access: AccessPayload) =>
     req<{ item: Item }>("/api/items/text", post({ title, content, expiresDays, access })),
-  shareUrl: (title: string, url: string, expiresDays: number, access: AccessPayload) =>
-    req<{ item: Item }>("/api/items/url", post({ title, url, expiresDays, access })),
+  shareUrl: (title: string, url: string, expiresDays: number, access: AccessPayload, batch?: { batchId?: string; batchName?: string }) =>
+    req<{ item: Item }>("/api/items/url", post({ title, url, expiresDays, access, ...batch })),
+  // bundles: things added together
+  renameBundle: (batchId: string, name: string) => req<{ ok: boolean; name: string; count: number }>(`/api/items/batch/${batchId}`, patch({ name })),
+  ungroupBundle: (batchId: string) => req<{ ok: boolean; count: number }>(`/api/items/batch/${batchId}`, patch({ ungroup: true })),
+  deleteBundle: (batchId: string) => req<{ ok: boolean; trashed: number; skipped: number }>(`/api/items/batch/${batchId}`, { method: "DELETE" }),
   beginChunked: (
     name: string,
     size: number,
     mime: string,
     chunkSize: number,
     access: AccessPayload,
-    meta?: { groupId?: string; category?: string; labels?: string; fingerprint?: string; resumeId?: string },
+    meta?: { groupId?: string; category?: string; labels?: string; fingerprint?: string; resumeId?: string; batchId?: string; batchName?: string },
   ) => req<PendingUpload & { resumed: boolean }>("/api/items/upload/begin", post({ name, size, mime, chunkSize, access, ...meta })),
   pendingUploads: () => req<{ uploads: PendingUpload[] }>("/api/items/upload/pending"),
   sendChunk: (uploadId: string, index: number, data: Blob, signal?: AbortSignal) =>
@@ -586,6 +597,9 @@ export const api = {
   config: () => req<ConfigState>("/api/admin/config"),
   saveConfig: (p: Record<string, unknown>) => req<ConfigState & { ok: boolean; restartRequired: string[]; overriddenByEnv: string[] }>("/api/admin/config", post(p)),
   restartServer: () => req<{ ok: boolean; restarting: boolean }>("/api/admin/restart", post()),
+  tls: () => req<TlsView>("/api/admin/tls"),
+  saveTls: (p: { mode: "off" | "auto" | "custom"; names?: string[]; regenerate?: boolean; certPem?: string; keyPem?: string; httpRedirectPort?: number; hsts?: boolean }) =>
+    req<TlsView & { ok: boolean }>("/api/admin/tls", post(p)),
 
 
   // overview (all signed-in users)
@@ -654,6 +668,80 @@ export const api = {
   shareMeta: (token: string, ref?: string) => req<any>(`/api/share/${encodeURIComponent(token)}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`),
   unlockShare: (token: string, pin: string) => req<{ ok: boolean; grant: string; preview?: string }>(`/api/share/${encodeURIComponent(token)}/unlock`, post({ pin })),
 };
+
+export interface TlsCert {
+  subject: string;
+  issuer: string;
+  selfSigned: boolean;
+  names: string[];
+  notBefore: number;
+  notAfter: number;
+  daysLeft: number;
+  expired: boolean;
+  fingerprint: string;
+}
+/** How the instance is served, for the HTTPS card in Admin -> Settings. */
+export interface TlsView {
+  running: { scheme: "http" | "https"; source: "off" | "self-signed" | "custom"; problem: string; cert: TlsCert | null };
+  requestScheme: "http" | "https";
+  mode: "off" | "auto" | "custom";
+  lockedBy: string;
+  pendingRestart: boolean;
+  selfSigned: TlsCert | null;
+  custom: (TlsCert & { from: "paths" | "upload"; problem: string }) | null;
+  suggestedNames: string[];
+  host: string;
+  port: number;
+  hsts: boolean;
+  httpRedirectPort: number;
+}
+
+/** A link that downloads several items as one .zip. */
+export function zipUrl(ids: string[]) {
+  return `/api/items/zip?ids=${ids.join(",")}`;
+}
+export function bundleZipUrl(batchId: string) {
+  return `/api/items/zip?batch=${batchId}`;
+}
+
+/** Random id shared by the things added in one go (works without a secure context, i.e. over plain HTTP). */
+export function newBatchId() {
+  const b = new Uint8Array(16);
+  crypto.getRandomValues(b);
+  b[6] = (b[6]! & 0x0f) | 0x40;
+  b[8] = (b[8]! & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+/**
+ * Copy text to the clipboard. The async clipboard API only exists on HTTPS
+ * and localhost, so plain-HTTP LAN addresses fall back to a hidden textarea.
+ */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* fall through to the legacy path */
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.cssText = "position:fixed;top:0;left:0;opacity:0;pointer-events:none";
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
 
 /** A chunked upload the server is still holding parts for (resumable after a reload or restart). */
 export interface PendingUpload {
@@ -856,6 +944,9 @@ export async function uploadFile(
     labels?: string;
     resumeId?: string;
     onResumed?: (fromPct: number) => void;
+    /** Set on every file of a multi-file upload so they stay together as one bundle. */
+    batchId?: string;
+    batchName?: string;
   },
 ) {
   const onProgress = opts.onProgress ?? (() => {});
@@ -865,6 +956,8 @@ export async function uploadFile(
       groupId: opts.groupId,
       category: opts.category,
       labels: opts.labels,
+      batchId: opts.batchId,
+      batchName: opts.batchName,
     });
     onProgress(100);
     return res.items[0]!;
@@ -875,6 +968,8 @@ export async function uploadFile(
     labels: opts.labels,
     fingerprint: fileFingerprint(file),
     resumeId: opts.resumeId,
+    batchId: opts.batchId,
+    batchName: opts.batchName,
   });
   const { uploadId, chunkCount, chunkSize } = begun;
   const have = new Set(begun.received);

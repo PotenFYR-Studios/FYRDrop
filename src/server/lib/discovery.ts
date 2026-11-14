@@ -2,7 +2,8 @@ import dgram from "node:dgram";
 import os from "node:os";
 import { getIdentity, announcement, type Announcement } from "./cluster";
 import { getSettings } from "./settings";
-import { effectiveClusterUrl, effectiveNetworkMode, effectivePort } from "./config";
+import { effectiveClusterUrl, effectivePort } from "./config";
+import { tlsState } from "./tls";
 
 /**
  * Local network discovery. Instances announce themselves on a multicast group
@@ -41,7 +42,7 @@ function primaryIpv4(): string {
 export function advertisedUrl(): string {
   const explicit = effectiveClusterUrl();
   if (explicit) return explicit;
-  const scheme = effectiveNetworkMode() === "off" ? "http" : "https";
+  const scheme = tlsState().active ? "https" : "http";
   return `${scheme}://${primaryIpv4()}:${selfPort}`;
 }
 

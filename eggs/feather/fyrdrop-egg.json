@@ -37,8 +37,8 @@
     {
       "name": "TLS Enabled",
       "env_variable": "TLS_ENABLED",
-      "default_value": "auto",
-      "description": "auto = auto-generated self-signed HTTPS cert. 0 = plain HTTP.",
+      "default_value": "0",
+      "description": "0 = plain HTTP (default; right on a trusted network or behind a proxy). auto = HTTPS with an auto-generated self-signed certificate.",
       "required": true,
       "user_viewable": true,
       "user_editable": true

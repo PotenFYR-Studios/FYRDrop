@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../App";
 import { api } from "../api";
 import { Icon } from "../icons";
-import { Btn, Input, Label, useToast } from "../ui";
+import { Btn, Input, Label, Spinner, useToast } from "../ui";
 import { BorderBeam, DotPattern } from "../components/magic";
 import { collectHints, quickHints, type DeviceHints } from "../device";
 
@@ -38,6 +38,63 @@ export default function Login() {
       alive = false;
     };
   }, []);
+
+  // No instance PIN (the default): register this device by itself and go on to
+  // the account sign-in. The PIN form below only shows when the owner turned it on.
+  const pinRequired = status?.pinRequired === true;
+  const [autoError, setAutoError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (pinRequired) return;
+    let alive = true;
+    setAutoError("");
+    (async () => {
+      try {
+        const h = await Promise.race([collectHints(), new Promise<DeviceHints>((r) => setTimeout(() => r(quickHints()), 1500))]);
+        await api.login("", { ...h });
+        await refresh();
+        // Still here after a successful registration: the browser dropped the cookie.
+        if (alive) setAutoError("The browser did not keep the session cookie. Allow cookies for this site, then try again.");
+      } catch (e: any) {
+        if (alive) setAutoError(e?.message ?? "Could not reach the server.");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // refresh is a stable callback; rerun only for a retry or a PIN mode change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pinRequired, attempt]);
+
+  if (!pinRequired) {
+    return (
+      <div className="anim-page relative flex min-h-screen items-center justify-center overflow-hidden px-4">
+        <DotPattern className="opacity-60" />
+        <div className="pointer-events-none absolute -top-32 left-1/2 h-96 w-[42rem] -translate-x-1/2 rounded-full bg-indigo-600/20 blur-[110px]" />
+        <div className="relative w-full max-w-sm text-center">
+          <div className="anim-glow mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-indigo-500/40 bg-indigo-500/10 text-indigo-300">
+            <Icon name="logo" size={30} />
+          </div>
+          <h1 className="text-2xl font-semibold tracking-tight text-white">{appName}</h1>
+          {autoError ? (
+            <div className="glass mt-6 rounded-2xl p-5 text-left">
+              <div className="flex items-start gap-2 text-sm text-amber-200">
+                <Icon name="alert" size={16} className="mt-0.5 shrink-0" />
+                <span>{autoError}</span>
+              </div>
+              <Btn className="mt-4 w-full" onClick={() => setAttempt((n) => n + 1)}>
+                <Icon name="refresh" size={15} /> Try again
+              </Btn>
+            </div>
+          ) : (
+            <p className="mt-3 flex items-center justify-center gap-2 text-sm text-slate-400">
+              <Spinner size={16} /> Opening the sign-in page…
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   const submit = async () => {
     if (!valid || busy) return;
